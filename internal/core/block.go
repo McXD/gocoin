@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"log"
+	"math/big"
 	"strconv"
 	"time"
 )
@@ -14,11 +16,10 @@ type Block struct {
 	Hash          [32]byte
 	PrevBlockHash [32]byte
 	Nonce         int
-	data          []byte
+	Data          []byte
+	Bits          int
 
-	// TODO: transactions
 	// TODO: merkle root
-	// TODO: difficulty
 }
 
 /*
@@ -31,13 +32,34 @@ func (b *Block) hash() {
 		b.Hash[:],
 		b.PrevBlockHash[:],
 		[]byte(strconv.Itoa(b.Nonce)),
-		b.data,
+		b.Data,
 	}, []byte{})
 
 	b.Hash = sha256.Sum256(header)
 }
 
-// NewBlock returns a new `Block` without PoW hash (zero hash)./*
+// hashPoW finds a Nonce so that the block's hash will be below the target.
+// The TimeStamp will also be updated to reflect the time when the block is mined.
+func (b *Block) hashPoW() {
+	var targetInt = big.NewInt(1)
+	targetInt.Lsh(targetInt, uint(256-b.Bits))
+	targetInt.Add(targetInt, big.NewInt(-1))
+
+	var start = time.Now().Unix() // starting time
+
+	b.hash() // hash once to fill the initial value
+	for hashInt := big.NewInt(0).SetBytes(b.Hash[:]); hashInt.Cmp(targetInt) != -1; b.Nonce += 1 {
+		//log.Printf("Calculating POW for Block %d: nonce=%d, hash=%x, target=%x, comp=%d\n", b.Index, b.Nonce, hashInt, targetInt, hashInt.Cmp(targetInt))
+		b.hash()
+		hashInt.SetBytes(b.Hash[:])
+	}
+
+	b.Timestamp = time.Now().Unix()
+
+	log.Printf("POW calculated for Block %d: nonce=%10d, hash=%x, spent=%4ds\n", b.Index, b.Nonce, b.Hash, b.Timestamp-start)
+}
+
+// NewBlock returns a new _valid_ block./*
 func NewBlock(index int, prevBlockHash [32]byte, data []byte) *Block {
 	block := Block{
 		Timestamp:     time.Now().Unix(),
@@ -45,10 +67,11 @@ func NewBlock(index int, prevBlockHash [32]byte, data []byte) *Block {
 		Hash:          [32]byte{},
 		PrevBlockHash: prevBlockHash,
 		Nonce:         0,
-		data:          data,
+		Data:          data,
+		Bits:          20, // TODO: move to config
 	}
 
-	block.hash()
+	block.hashPoW()
 
 	return &block
 }

@@ -14,7 +14,7 @@ type Blockchain struct {
 
 func NewBlockchain() *Blockchain {
 	blocks := make(map[[32]byte]*Block)
-	genesis := NewBlock(1, [32]byte{}, []byte{})
+	genesis := NewBlock(0, [32]byte{}, []byte{})
 	blocks[genesis.Hash] = genesis
 
 	return &Blockchain{

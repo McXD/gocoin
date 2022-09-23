@@ -18,17 +18,18 @@ func greeting() {
 	println()
 }
 
+// run a gocoin node
 func main() {
 	greeting()
 
 	bc := core.NewBlockchain()
-	b1 := core.NewBlock(0, bc.Genesis.Hash, []byte{})
+	b1 := core.NewBlock(1, bc.Genesis.Hash, []byte{})
 	bc.AddBlock(b1)
 
-	b2 := core.NewBlock(1, b1.Hash, []byte{})
+	b2 := core.NewBlock(2, b1.Hash, []byte{})
 	bc.AddBlock(b2)
 
-	b3 := core.NewBlock(2, b2.Hash, []byte{})
+	b3 := core.NewBlock(3, b2.Hash, []byte{})
 	bc.AddBlock(b3)
 
 	fmt.Print(bc)
