@@ -3,21 +3,18 @@ package main
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"gocoin/internal/core"
+	"gocoin/internal/api"
 	"os"
 )
 
 func greeting() {
 	fmt.Print(`
-  ________       _________        .__        
- /  _____/  ____ \_   ___ \  ____ |__| ____  
-/   \  ___ /  _ \/    \  \/ /  _ \|  |/    \ 
-\    \_\  (  <_> )     \___(  <_> )  |   |  \
- \______  /\____/ \______  /\____/|__|___|  /
-        \/               \/               \/ 
+  __      _              __                       
+ /__  _  /   _  o ._    (_ _|_  _. ._ _|_  _   _| 
+ \_| (_) \_ (_) | | |   __) |_ (_| |   |_ (/_ (_| 
+
+
 `)
-	println()
-	println()
 }
 
 func init() {
@@ -36,15 +33,21 @@ func init() {
 func main() {
 	greeting()
 
-	bc := core.NewBlockchain()
-	b1 := core.NewBlock(1, bc.Genesis.Hash, []byte{})
-	bc.AddBlock(b1)
+	var server = api.NewServer(8765)
 
-	b2 := core.NewBlock(2, b1.Hash, []byte{})
-	bc.AddBlock(b2)
+	if err := server.Run(); err != nil {
+		log.Warn("JSON-RPC server not started: %w", err)
+	}
 
-	b3 := core.NewBlock(3, b2.Hash, []byte{})
-	bc.AddBlock(b3)
-
-	fmt.Print(bc)
+	//bc := core.NewBlockchain()
+	//b1 := core.NewBlock(1, bc.Genesis.Hash, []byte{})
+	//bc.AddBlock(b1)
+	//
+	//b2 := core.NewBlock(2, b1.Hash, []byte{})
+	//bc.AddBlock(b2)
+	//
+	//b3 := core.NewBlock(3, b2.Hash, []byte{})
+	//bc.AddBlock(b3)
+	//
+	//fmt.Print(bc)
 }
