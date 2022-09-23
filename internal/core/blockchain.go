@@ -27,6 +27,9 @@ func NewBlockchain() *Blockchain {
 // AddBlock scans the chain and insert the given block after its stated previous block./*
 // TODO: address branching
 func (bc *Blockchain) AddBlock(b *Block) error {
+	// verify that the block is valid
+
+	// check if the block is on the longest chain, if so, change the head
 	if bc.blocks[b.PrevBlockHash] != nil {
 		bc.blocks[b.Hash] = b
 		bc.Head = b

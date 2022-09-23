@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"math/big"
 	"strconv"
 	"time"
@@ -13,8 +13,8 @@ import (
 type Block struct {
 	Timestamp     int64
 	Index         int
-	Hash          [32]byte
-	PrevBlockHash [32]byte
+	Hash          SHA256Hash
+	PrevBlockHash SHA256Hash
 	Nonce         int
 	Data          []byte
 	Bits          int
@@ -56,7 +56,13 @@ func (b *Block) hashPoW() {
 
 	b.Timestamp = time.Now().Unix()
 
-	log.Printf("POW calculated for Block %d: nonce=%10d, hash=%x, spent=%4ds\n", b.Index, b.Nonce, b.Hash, b.Timestamp-start)
+	log.WithFields(log.Fields{
+		"index":     b.Index,
+		"timestamp": b.Timestamp,
+		"nonce":     b.Nonce,
+		"hash":      b.Hash,
+		"spent":     b.Timestamp - start,
+	}).Info("POW calculated for Block")
 }
 
 // NewBlock returns a new _valid_ block./*
@@ -77,5 +83,5 @@ func NewBlock(index int, prevBlockHash [32]byte, data []byte) *Block {
 }
 
 func (b *Block) String() string {
-	return fmt.Sprintf("Block %d, hash=%x", b.Index, b.Hash)
+	return fmt.Sprintf("Block %d, hash=%s", b.Index, b.Hash)
 }
