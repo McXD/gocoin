@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"gocoin/internal/api"
+	"gocoin/internal/rpc"
 	"os"
 )
 
@@ -33,7 +33,7 @@ func init() {
 func main() {
 	greeting()
 
-	var server = api.NewServer(8765)
+	var server = rpc.NewServer(8765)
 
 	if err := server.Run(); err != nil {
 		log.Warn("JSON-RPC server not started: %w", err)

@@ -14,7 +14,7 @@ type Blockchain struct {
 
 func NewBlockchain() *Blockchain {
 	blocks := make(map[[32]byte]*Block)
-	genesis := NewBlock(0, [32]byte{}, []byte{})
+	genesis := NewBlock(0, SHA256Hash{}, []*Transaction{NewCoinbaseTx()})
 	blocks[genesis.Hash] = genesis
 
 	return &Blockchain{
@@ -27,7 +27,9 @@ func NewBlockchain() *Blockchain {
 // AddBlock scans the chain and insert the given block after its stated previous block./*
 // TODO: address branching
 func (bc *Blockchain) AddBlock(b *Block) error {
-	// verify that the block is valid
+	if err := b.verified(); err != nil {
+		return fmt.Errorf("failed to add block: %w", err)
+	}
 
 	// check if the block is on the longest chain, if so, change the head
 	if bc.blocks[b.PrevBlockHash] != nil {

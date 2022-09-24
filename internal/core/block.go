@@ -16,23 +16,45 @@ type Block struct {
 	Hash          SHA256Hash
 	PrevBlockHash SHA256Hash
 	Nonce         int
-	Data          []byte
+	Transactions  []*Transaction
 	Bits          int
+	MerkleRoot    SHA256Hash
+}
 
-	// TODO: merkle root
+// TODO: merkle tree
+func (b *Block) hashTxs() SHA256Hash {
+	var txHashes []SHA256Hash
+	var txHash SHA256Hash
+	var txHashesBytes [][]byte
+
+	// type conversion
+	for _, Hash := range txHashes {
+		txHashesBytes = append(txHashesBytes, Hash[:])
+	}
+
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.Hash)
+	}
+	txHash = sha256.Sum256(bytes.Join(txHashesBytes, []byte{}))
+
+	return txHash
 }
 
 /*
  * Concatenate all fields as `[]byte` and use SHA256 hash. Set the field with result.
  */
 func (b *Block) hash() {
+	// TODO: do not repeat hashes
+	merkleRoot := b.hashTxs()
+	b.MerkleRoot = merkleRoot
+
 	header := bytes.Join([][]byte{
-		[]byte(strconv.FormatInt(b.Timestamp, 10)),
-		[]byte(strconv.Itoa(b.Index)),
-		b.Hash[:],
-		b.PrevBlockHash[:],
-		[]byte(strconv.Itoa(b.Nonce)),
-		b.Data,
+		[]byte(strconv.FormatInt(b.Timestamp, 10)), // timestamp
+		[]byte(strconv.Itoa(b.Index)),              // index
+		b.Hash[:],                                  // hash
+		b.PrevBlockHash[:],                         // prev_hash
+		[]byte(strconv.Itoa(b.Nonce)),              // nonce
+		merkleRoot[:],                              // merkle root
 	}, []byte{})
 
 	b.Hash = sha256.Sum256(header)
@@ -66,20 +88,26 @@ func (b *Block) hashPoW() {
 }
 
 // NewBlock returns a new _valid_ block./*
-func NewBlock(index int, prevBlockHash [32]byte, data []byte) *Block {
+func NewBlock(index int, prevBlockHash [32]byte, transactions []*Transaction) *Block {
 	block := Block{
 		Timestamp:     time.Now().Unix(),
 		Index:         index,
 		Hash:          [32]byte{},
 		PrevBlockHash: prevBlockHash,
 		Nonce:         0,
-		Data:          data,
+		Transactions:  transactions,
 		Bits:          20, // TODO: move to config
 	}
 
 	block.hashPoW()
 
 	return &block
+}
+
+// Verify in a block's context (PoW and transactions)
+func (b *Block) verified() error {
+	// TODO
+	return nil
 }
 
 func (b *Block) String() string {
