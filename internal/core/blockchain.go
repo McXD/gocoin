@@ -6,21 +6,34 @@ import (
 	"strings"
 )
 
+type UXTORecord struct {
+	isCoinbase    bool
+	indices       []uint32
+	amounts       map[uint]uint32
+	scriptPubKeys map[uint]*ScriptPubKey
+}
+
 type Blockchain struct {
 	Genesis *Block
 	Head    *Block
-	blocks  map[[32]byte]*Block // TODO: persistence
+	blocks  map[Hash256]*Block      // TODO: persistence
+	uxtos   map[Hash256]*UXTORecord // TODO: persistence
 }
 
-func NewBlockchain() *Blockchain {
-	blocks := make(map[[32]byte]*Block)
-	genesis := NewBlock(0, SHA256Hash{}, []*Transaction{NewCoinbaseTx()})
+func NewBlockchain(pubKeyHash Hash160) *Blockchain {
+	blocks := make(map[Hash256]*Block)
+	uxtos := make(map[Hash256]*UXTORecord, 0)
+
+	coinbaseTx := NewCoinbaseTx([]byte("GoCoin spawned!"), pubKeyHash)
+	genesis := NewBlock(0, Hash256{}, []*Transaction{coinbaseTx})
+
 	blocks[genesis.Hash] = genesis
 
 	return &Blockchain{
 		Genesis: genesis,
 		Head:    genesis,
 		blocks:  blocks,
+		uxtos:   uxtos,
 	}
 }
 
@@ -35,10 +48,31 @@ func (bc *Blockchain) AddBlock(b *Block) error {
 	if bc.blocks[b.PrevBlockHash] != nil {
 		bc.blocks[b.Hash] = b
 		bc.Head = b
+
 		return nil
 	}
 
 	return errors.New("cannot find parent block")
+}
+
+func (bc *Blockchain) IsSpent(txHash Hash256, n uint32) bool {
+	for _, ind := range bc.uxtos[txHash].indices {
+		if ind == n {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (bc *Blockchain) updateUXTOSet(b *Block) {
+	for _, tx := range b.Transactions {
+		for _, txIn := range tx.In {
+			// delete the indices
+			// TODO
+			_ = txIn
+		}
+	}
 }
 
 func (bc *Blockchain) String() string {

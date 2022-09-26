@@ -1,9 +1,34 @@
 package core
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"fmt"
+	"golang.org/x/crypto/ripemd160"
+)
 
-type SHA256Hash [32]byte
+type Hash256 [32]byte
+type Hash160 [20]byte
 
-func (hash SHA256Hash) String() string {
+func (hash Hash256) String() string {
 	return fmt.Sprintf("%X", [32]byte(hash))
+}
+
+func HashTo256(data []byte) Hash256 {
+	return sha256.Sum256(data[:])
+}
+
+func DoubleHashTo256(data []byte) Hash256 {
+	ret := HashTo256(data)
+	return HashTo256(ret[:])
+}
+
+func HashTo160(data []byte) Hash160 {
+	var sum160 Hash160
+
+	md := ripemd160.New()
+	sum256 := sha256.Sum256(data[:])
+	md.Write(sum256[:])
+	copy(sum160[:], md.Sum(nil))
+
+	return sum160
 }

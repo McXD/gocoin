@@ -1,74 +1,51 @@
 package core
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/binary"
+	"crypto"
+	"crypto/rsa"
 )
 
-type TxOut struct {
-	Value        uint32 // number of satoshi (100,000,000)
-	ScriptPubKey []byte
+type ScriptPubKey struct {
+	PubKeyHash Hash160
 }
 
-func (o TxOut) hash() SHA256Hash {
-	valueBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(valueBytes, o.Value)
+type ScriptSig struct {
+	PubKey    rsa.PublicKey
+	Signature []byte
+}
 
-	return sha256.Sum256(bytes.Join([][]byte{
-		valueBytes, o.ScriptPubKey,
-	}, []byte{}))
+type TxOut struct {
+	Value uint32 // number of satoshi (100,000,000)
+	ScriptPubKey
 }
 
 type TxIn struct {
-	Hash      SHA256Hash // Txid
-	N         uint32     // output index
-	ScriptSig []byte
-}
-
-func (i TxIn) hash() SHA256Hash {
-	nBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(nBytes, i.N)
-
-	return sha256.Sum256(bytes.Join([][]byte{
-		i.Hash[:], nBytes, i.ScriptSig,
-	}, []byte{}))
+	Hash Hash256 // Txid
+	N    uint32  // output index
+	ScriptSig
+	CoinBase []byte
 }
 
 type Transaction struct {
-	Hash SHA256Hash
+	Hash Hash256
 	In   []TxIn
 	Out  []TxOut
 }
 
-func (tx *Transaction) hash() {
-	var allHashes [][]byte
-
-	// inputs
-	for _, in := range tx.In {
-		t := in.hash()
-		allHashes = append(allHashes, t[:])
-	}
-
-	// outputs
-	for _, in := range tx.Out {
-		t := in.hash()
-		allHashes = append(allHashes, t[:])
-	}
-
-	tx.Hash = sha256.Sum256(bytes.Join(allHashes, []byte{}))
+func (tx *Transaction) SetHash() {
+	tx.Hash = HashTo256(tx.ToBytes(true))
 }
 
-func NewCoinbaseTx() *Transaction {
+func NewCoinbaseTx(coinbase []byte, pubKeyHash Hash160) *Transaction {
 	txIn := TxIn{
-		Hash:      SHA256Hash{}, // zeros
-		N:         10000,        // TODO: specification
-		ScriptSig: []byte{0xb, 0xa, 0xb, 0xe},
+		Hash:     Hash256{}, // zeros
+		N:        10000,     // TODO: specification
+		CoinBase: coinbase,
 	}
 
 	txOut := TxOut{
-		Value:        100,                            // TODO: dynamic
-		ScriptPubKey: []byte{0x11, 0x22, 0x33, 0x44}, // TODO: scripting
+		Value:        100, // TODO: dynamic
+		ScriptPubKey: ScriptPubKey{pubKeyHash},
 	}
 
 	tx := Transaction{
@@ -76,7 +53,61 @@ func NewCoinbaseTx() *Transaction {
 		Out: []TxOut{txOut},
 	}
 
-	tx.hash()
+	tx.SetHash()
 
 	return &tx
+}
+
+// ToBytes returns the raw bytes of the transaction for signing or hashing
+func (tx *Transaction) ToBytes(withSig bool) []byte {
+	var raw []byte
+
+	// TxIns
+	for _, txIn := range tx.In {
+		raw = append(raw, txIn.Hash[:]...)        // tx reference
+		raw = append(raw, UintToBytes(txIn.N)...) // index
+		if withSig {
+			raw = append(raw, txIn.Signature...) // signature
+		}
+		//raw = append(raw, txIn.PubKey.N.Bytes()...)              // pubKey: N TODO: segmentation fault
+		raw = append(raw, UintToBytes(uint32(txIn.PubKey.E))...) // pubKey: E
+	}
+
+	// TxOuts
+	for _, txOut := range tx.Out {
+		raw = append(raw, UintToBytes(txOut.Value)...) // value
+		raw = append(raw, txOut.PubKeyHash[:]...)      // scriptPubKey (only the public key in our case)
+	}
+
+	return raw
+}
+
+func (txIn *TxIn) verifiedSignature(txHash []byte) bool {
+	err := rsa.VerifyPKCS1v15(&txIn.PubKey, crypto.SHA256, txHash, txIn.Signature)
+	if err != nil {
+		return false
+	}
+
+	return true
+}
+
+func (tx *Transaction) VerifiedSignature() bool {
+	raw := tx.ToBytes(false)
+	txHash := DoubleHashTo256(raw)
+
+	for _, txIn := range tx.In {
+		if !txIn.verifiedSignature(txHash[:]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func HashPubKey(pubKey *rsa.PublicKey) Hash160 {
+	var raw []byte
+	raw = append(raw, pubKey.N.Bytes()...)
+	raw = append(raw, UintToBytes(uint32(pubKey.E))...)
+
+	return HashTo160(raw)
 }
