@@ -15,14 +15,69 @@ type Block struct {
 	Index         int
 	Hash          Hash256
 	PrevBlockHash Hash256
+	NextBlockHash Hash256
 	Nonce         int
 	Transactions  []*Transaction
 	Bits          int
 	MerkleRoot    Hash256
 }
 
-// TODO: merkle tree
-func (b *Block) hashTxs() Hash256 {
+func (b *Block) verified() error {
+	// TODO
+	return nil
+}
+
+func (b *Block) String() string {
+	return fmt.Sprintf("Block %d, SetHash=%s", b.Index, b.Hash)
+}
+
+type BlockBuilder struct {
+	*Block
+}
+
+func NewBlockBuilder() *BlockBuilder {
+	return &BlockBuilder{&Block{}}
+}
+
+func (bb *BlockBuilder) SetIndex(index int) *BlockBuilder {
+	bb.Index = index
+	return bb
+}
+
+func (bb *BlockBuilder) SetTimeStamp(timestamp int64) *BlockBuilder {
+	bb.Timestamp = timestamp
+	return bb
+}
+
+func (bb *BlockBuilder) SetPrevBlockHash(hash Hash256) *BlockBuilder {
+	bb.PrevBlockHash = hash
+	return bb
+}
+
+func (bb *BlockBuilder) Now() *BlockBuilder {
+	return bb.SetTimeStamp(time.Now().Unix())
+}
+
+func (bb *BlockBuilder) SetDifficulty(bits int) *BlockBuilder {
+	bb.Bits = bits
+	return bb
+}
+
+func (bb *BlockBuilder) AddTransaction(ctx *BlockchainInMem, tx *Transaction) (*BlockBuilder, error) {
+	if ctx != nil {
+		if err := bb.VerifyTransaction(ctx, tx); err != nil {
+			return bb, fmt.Errorf("transaction verification failed: %w", err)
+		}
+	}
+
+	bb.Transactions = append(bb.Transactions, tx)
+
+	return bb, nil
+}
+
+func (bb *BlockBuilder) SetMerkleTreeRoot() *BlockBuilder {
+	// TODO: merkle tree implementation
+
 	var txHashes []Hash256
 	var txHash Hash256
 	var txHashesBytes [][]byte
@@ -32,80 +87,67 @@ func (b *Block) hashTxs() Hash256 {
 		txHashesBytes = append(txHashesBytes, Hash[:])
 	}
 
-	for _, tx := range b.Transactions {
+	for _, tx := range bb.Transactions {
 		txHashes = append(txHashes, tx.Hash)
 	}
-	txHash = sha256.Sum256(bytes.Join(txHashesBytes, []byte{}))
 
-	return txHash
+	txHash = sha256.Sum256(bytes.Join(txHashesBytes, []byte{}))
+	bb.MerkleRoot = txHash
+
+	return bb
+}
+
+// Mine finds a Nonce so that the block's hash will be below the target.
+// The TimeStamp will also be updated to reflect the time when the block is mined.
+// This method DOES NOT ensure that all fields are properly set.
+func (bb *BlockBuilder) Mine() *Block {
+	var targetInt = big.NewInt(1)
+	targetInt.Lsh(targetInt, uint(256-bb.Bits))
+	targetInt.Add(targetInt, big.NewInt(-1))
+
+	startTime := time.Now().Unix()
+
+	for {
+		bb.hash()
+		hashInt := big.NewInt(0).SetBytes(bb.Hash[:])
+		if hashInt.Cmp(targetInt) == -1 {
+			break
+		}
+		bb.Nonce++
+	}
+
+	endTime := time.Now().Unix()
+	bb.Timestamp = endTime
+
+	log.WithFields(log.Fields{
+		"index":     bb.Index,
+		"timestamp": bb.Timestamp,
+		"nonce":     bb.Nonce,
+		"hash":      bb.Hash,
+		"spent":     endTime - startTime,
+	}).Info("POW calculated for Block")
+
+	return bb.Block
 }
 
 /*
  * Concatenate all fields as `[]byte` and use SHA256 hash. Set the field with result.
  */
-func (b *Block) hash() {
-	// TODO: do not repeat hashes
-	merkleRoot := b.hashTxs()
-	b.MerkleRoot = merkleRoot
-
+func (bb *BlockBuilder) hash() {
 	header := bytes.Join([][]byte{
-		[]byte(strconv.FormatInt(b.Timestamp, 10)), // timestamp
-		[]byte(strconv.Itoa(b.Index)),              // index
-		b.Hash[:],                                  // SetHash
-		b.PrevBlockHash[:],                         // prev_hash
-		[]byte(strconv.Itoa(b.Nonce)),              // nonce
-		merkleRoot[:],                              // merkle root
+		[]byte(strconv.FormatInt(bb.Timestamp, 10)), // timestamp
+		[]byte(strconv.Itoa(bb.Index)),              // index
+		bb.Hash[:],                                  // SetHash
+		bb.PrevBlockHash[:],                         // prev_hash
+		[]byte(strconv.Itoa(bb.Nonce)),              // nonce
+		bb.MerkleRoot[:],                            // merkle root
 	}, []byte{})
 
-	b.Hash = sha256.Sum256(header)
+	bb.Hash = sha256.Sum256(header)
 }
 
-// hashPoW finds a Nonce so that the block's hash will be below the target.
-// The TimeStamp will also be updated to reflect the time when the block is mined.
-func (b *Block) hashPoW() {
-	var targetInt = big.NewInt(1)
-	targetInt.Lsh(targetInt, uint(256-b.Bits))
-	targetInt.Add(targetInt, big.NewInt(-1))
-
-	var start = time.Now().Unix() // starting time
-
-	b.hash() // SetHash once to fill the initial value
-	for hashInt := big.NewInt(0).SetBytes(b.Hash[:]); hashInt.Cmp(targetInt) != -1; b.Nonce += 1 {
-		//log.Printf("Calculating POW for Block %d: nonce=%d, SetHash=%x, target=%x, comp=%d\n", b.Index, b.Nonce, hashInt, targetInt, hashInt.Cmp(targetInt))
-		b.hash()
-		hashInt.SetBytes(b.Hash[:])
-	}
-
-	b.Timestamp = time.Now().Unix()
-
-	log.WithFields(log.Fields{
-		"index":     b.Index,
-		"timestamp": b.Timestamp,
-		"nonce":     b.Nonce,
-		"hash":      b.Hash,
-		"spent":     b.Timestamp - start,
-	}).Info("POW calculated for Block")
-}
-
-// NewBlock returns a new _valid_ block./*
-func NewBlock(index int, prevBlockHash [32]byte, transactions []*Transaction) *Block {
-	block := Block{
-		Timestamp:     time.Now().Unix(),
-		Index:         index,
-		Hash:          [32]byte{},
-		PrevBlockHash: prevBlockHash,
-		Nonce:         0,
-		Transactions:  transactions,
-		Bits:          20, // TODO: move to config
-	}
-
-	block.hashPoW()
-
-	return &block
-}
-
-func (b *Block) VerifyTransaction(ctx *Blockchain, tx *Transaction) error {
-	for _, txIn := range tx.In {
+func (bb *BlockBuilder) VerifyTransaction(ctx *BlockchainInMem, tx *Transaction) error {
+	for _, txIn := range tx.Ins {
 		// verify that the referenced transaction output is not spent
 		if ctx.IsSpent(txIn.Hash, txIn.N) {
 			return fmt.Errorf("transaction is spent: id=%x, n=%d", txIn.Hash, txIn.N)
@@ -119,27 +161,18 @@ func (b *Block) VerifyTransaction(ctx *Blockchain, tx *Transaction) error {
 	}
 
 	// verify that signature is correct
-	if !tx.VerifiedSignature() {
-		return fmt.Errorf("invalid signature")
+	if err := tx.VerifiedSignature(); err != nil {
+		return fmt.Errorf("%w", err)
 	}
 
 	return nil
 }
 
-func (b *Block) AddTransaction(ctx *Blockchain, tx *Transaction) error {
-	if err := b.VerifyTransaction(ctx, tx); err != nil {
-		return fmt.Errorf("cannot add transaction %x to block %d: %w", tx.Hash, b.Index, err)
-	}
-
-	b.Transactions = append(b.Transactions, tx)
-
-	return nil
+func (bb *BlockBuilder) Verified() (*BlockBuilder, error) {
+	// TODO
+	return bb, nil
 }
 
-func (b *Block) verified() error {
-	return nil
-}
-
-func (b *Block) String() string {
-	return fmt.Sprintf("Block %d, SetHash=%s", b.Index, b.Hash)
+func (bb *BlockBuilder) Build() *Block {
+	return bb.Block
 }

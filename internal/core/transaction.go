@@ -2,7 +2,9 @@ package core
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
+	"fmt"
 )
 
 type ScriptPubKey struct {
@@ -28,8 +30,21 @@ type TxIn struct {
 
 type Transaction struct {
 	Hash Hash256
-	In   []TxIn
-	Out  []TxOut
+	Ins  []*TxIn
+	Outs []*TxOut
+}
+
+// NewTransaction creates a new `Transaction` with hash set.
+func NewTransaction(ins []*TxIn, outs []*TxOut) *Transaction {
+	tx := Transaction{
+		Hash: Hash256{},
+		Ins:  ins,
+		Outs: outs,
+	}
+
+	tx.SetHash()
+
+	return &tx
 }
 
 func (tx *Transaction) SetHash() {
@@ -49,8 +64,8 @@ func NewCoinbaseTx(coinbase []byte, pubKeyHash Hash160) *Transaction {
 	}
 
 	tx := Transaction{
-		In:  []TxIn{txIn},
-		Out: []TxOut{txOut},
+		Ins:  []*TxIn{&txIn},
+		Outs: []*TxOut{&txOut},
 	}
 
 	tx.SetHash()
@@ -63,7 +78,7 @@ func (tx *Transaction) ToBytes(withSig bool) []byte {
 	var raw []byte
 
 	// TxIns
-	for _, txIn := range tx.In {
+	for _, txIn := range tx.Ins {
 		raw = append(raw, txIn.Hash[:]...)        // tx reference
 		raw = append(raw, UintToBytes(txIn.N)...) // index
 		if withSig {
@@ -74,7 +89,7 @@ func (tx *Transaction) ToBytes(withSig bool) []byte {
 	}
 
 	// TxOuts
-	for _, txOut := range tx.Out {
+	for _, txOut := range tx.Outs {
 		raw = append(raw, UintToBytes(txOut.Value)...) // value
 		raw = append(raw, txOut.PubKeyHash[:]...)      // scriptPubKey (only the public key in our case)
 	}
@@ -82,32 +97,83 @@ func (tx *Transaction) ToBytes(withSig bool) []byte {
 	return raw
 }
 
-func (txIn *TxIn) verifiedSignature(txHash []byte) bool {
-	err := rsa.VerifyPKCS1v15(&txIn.PubKey, crypto.SHA256, txHash, txIn.Signature)
+func (tx *Transaction) Sign(privKey *rsa.PrivateKey) error {
+	var raw []byte
+	var txHash Hash256
+
+	raw = tx.ToBytes(false)
+	txHash = DoubleHashTo256(raw)
+
+	// sign txHash
+	rng := rand.Reader
+	sig, err := rsa.SignPKCS1v15(rng, privKey, crypto.SHA256, txHash[:])
 	if err != nil {
-		return false
+		return err
 	}
 
-	return true
+	for _, txIn := range tx.Ins {
+		txIn.Signature = sig
+	}
+
+	return nil
 }
 
-func (tx *Transaction) VerifiedSignature() bool {
+func (tx *Transaction) VerifiedSignature() error {
 	raw := tx.ToBytes(false)
 	txHash := DoubleHashTo256(raw)
 
-	for _, txIn := range tx.In {
-		if !txIn.verifiedSignature(txHash[:]) {
-			return false
+	for _, txIn := range tx.Ins {
+		err := rsa.VerifyPKCS1v15(&txIn.PubKey, crypto.SHA256, txHash[:], txIn.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid signature for input %x:%d in %x: %w", txIn.Hash[:], txIn.N, tx.Hash[:], err)
 		}
 	}
 
-	return true
+	return nil
 }
 
-func HashPubKey(pubKey *rsa.PublicKey) Hash160 {
-	var raw []byte
-	raw = append(raw, pubKey.N.Bytes()...)
-	raw = append(raw, UintToBytes(uint32(pubKey.E))...)
+func (tx *Transaction) IsCoinbaseTx() bool {
+	return len(tx.Ins) == 1 && len(tx.Ins[0].CoinBase) != 0
+}
 
-	return HashTo160(raw)
+type TransactionBuilder struct {
+	*Transaction
+}
+
+func NewTransactionBuilder() *TransactionBuilder {
+	return &TransactionBuilder{&Transaction{}}
+}
+
+func (txb *TransactionBuilder) AddInput(id Hash256, n uint32, pubKey rsa.PublicKey) *TransactionBuilder {
+	txIn := TxIn{
+		Hash: id,
+		N:    n,
+		ScriptSig: ScriptSig{
+			PubKey: pubKey,
+		},
+		CoinBase: nil,
+	}
+
+	txb.Transaction.Ins = append(txb.Transaction.Ins, &txIn)
+	return txb
+}
+
+func (txb *TransactionBuilder) AddOutput(v uint32, pubKeyHash Hash160) *TransactionBuilder {
+	txOut := TxOut{
+		Value: v,
+		ScriptPubKey: ScriptPubKey{
+			PubKeyHash: pubKeyHash,
+		},
+	}
+
+	txb.Transaction.Outs = append(txb.Transaction.Outs, &txOut)
+	return txb
+}
+
+func (txb *TransactionBuilder) Sign(privKey *rsa.PrivateKey) (*Transaction, error) {
+	if err := txb.Transaction.Sign(privKey); err != nil {
+		return txb.Transaction, fmt.Errorf("failed to sign transaction: %w", err)
+	}
+
+	return txb.Transaction, nil
 }
