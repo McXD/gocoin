@@ -5,6 +5,7 @@ import (
 	"net/http"
 )
 
+// PingController maps to /ping
 type PingController struct{}
 
 func (t *PingController) Test(c *gin.Context) {

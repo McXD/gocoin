@@ -2,6 +2,7 @@ package core
 
 type Blockchain interface {
 	VerifyTransaction(tx *Transaction) error
+	AddTransaction(tx *Transaction)
 
 	VerifyBlock(b *Block) error
 	AddBlock(b *Block)

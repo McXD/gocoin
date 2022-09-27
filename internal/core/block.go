@@ -64,11 +64,11 @@ func (bb *BlockBuilder) SetDifficulty(bits int) *BlockBuilder {
 }
 
 func (bb *BlockBuilder) AddTransaction(ctx *BlockchainInMem, tx *Transaction) (*BlockBuilder, error) {
-	if ctx != nil {
-		if err := bb.VerifyTransaction(ctx, tx); err != nil {
-			return bb, fmt.Errorf("transaction verification failed: %w", err)
-		}
-	}
+	//if ctx != nil {
+	//	if err := bb.VerifyTransaction(ctx, tx); err != nil {
+	//		return bb, fmt.Errorf("transaction verification failed: %w", err)
+	//	}
+	//}
 
 	bb.Transactions = append(bb.Transactions, tx)
 
@@ -146,27 +146,27 @@ func (bb *BlockBuilder) hash() {
 	bb.Hash = sha256.Sum256(header)
 }
 
-func (bb *BlockBuilder) VerifyTransaction(ctx *BlockchainInMem, tx *Transaction) error {
-	for _, txIn := range tx.Ins {
-		// verify that the referenced transaction output is not spent
-		if ctx.IsSpent(txIn.Hash, txIn.N) {
-			return fmt.Errorf("transaction is spent: id=%x, n=%d", txIn.Hash, txIn.N)
-		}
-
-		// verify that public key is correct
-		// the key is read from UXTO's ScriptPubKey
-		if utxo, _ := ctx.uxtos[txIn.Hash]; utxo.scriptPubKeys[uint(txIn.N)].PubKeyHash != HashPubKey(&txIn.PubKey) {
-			return fmt.Errorf("unmached pubKeyHash: given=%x, want=%x", HashPubKey(&txIn.PubKey), utxo.scriptPubKeys[uint(txIn.N)].PubKeyHash)
-		}
-	}
-
-	// verify that signature is correct
-	if err := tx.VerifiedSignature(); err != nil {
-		return fmt.Errorf("%w", err)
-	}
-
-	return nil
-}
+//func (bb *BlockBuilder) VerifyTransaction(ctx *BlockchainInMem, tx *Transaction) error {
+//	for _, txIn := range tx.Ins {
+//		// verify that the referenced transaction output is not spent
+//		if ctx.IsSpent(txIn.Hash, txIn.N) {
+//			return fmt.Errorf("transaction is spent: id=%x, n=%d", txIn.Hash, txIn.N)
+//		}
+//
+//		// verify that public key is correct
+//		// the key is read from UXTO's ScriptPubKey
+//		if utxo, _ := ctx.uxtos[txIn.Hash]; utxo.scriptPubKeys[uint(txIn.N)].PubKeyHash != HashPubKey(&txIn.PubKey) {
+//			return fmt.Errorf("unmached pubKeyHash: given=%x, want=%x", HashPubKey(&txIn.PubKey), utxo.scriptPubKeys[uint(txIn.N)].PubKeyHash)
+//		}
+//	}
+//
+//	// verify that signature is correct
+//	if err := tx.VerifySignature(); err != nil {
+//		return fmt.Errorf("%w", err)
+//	}
+//
+//	return nil
+//}
 
 func (bb *BlockBuilder) Verified() (*BlockBuilder, error) {
 	// TODO

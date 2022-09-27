@@ -27,3 +27,12 @@ func RandomHash256() Hash256 {
 
 	return HashTo256(buf[:])
 }
+
+func Contains(s []uint32, e uint32) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}

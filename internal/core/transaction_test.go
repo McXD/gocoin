@@ -54,7 +54,7 @@ func TestTransaction_SignAndVerify(t *testing.T) {
 
 	tx.SetHash()
 
-	if err := tx.VerifiedSignature(); err != nil {
-		t.Fatalf("tx.VerifiedSignature() = false; want true: %s", err)
+	if err := tx.VerifySignature(); err != nil {
+		t.Fatalf("tx.VerifySignature() = false; want true: %s", err)
 	}
 }

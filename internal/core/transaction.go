@@ -21,6 +21,11 @@ type TxOut struct {
 	ScriptPubKey
 }
 
+// CanBeSpentBy checks whether the given pubKey is entitled to this output
+func (txOut *TxOut) CanBeSpentBy(pubKey rsa.PublicKey) bool {
+	return HashPubKey(&pubKey) == txOut.PubKeyHash
+}
+
 type TxIn struct {
 	Hash Hash256 // Txid
 	N    uint32  // output index
@@ -118,14 +123,14 @@ func (tx *Transaction) Sign(privKey *rsa.PrivateKey) error {
 	return nil
 }
 
-func (tx *Transaction) VerifiedSignature() error {
+func (tx *Transaction) VerifySignature() error {
 	raw := tx.ToBytes(false)
 	txHash := DoubleHashTo256(raw)
 
 	for _, txIn := range tx.Ins {
 		err := rsa.VerifyPKCS1v15(&txIn.PubKey, crypto.SHA256, txHash[:], txIn.Signature)
 		if err != nil {
-			return fmt.Errorf("invalid signature for input %x:%d in %x: %w", txIn.Hash[:], txIn.N, tx.Hash[:], err)
+			return fmt.Errorf("invalid signature for input %x:%d: %w", txIn.Hash[:], txIn.N, err)
 		}
 	}
 
@@ -158,6 +163,21 @@ func (txb *TransactionBuilder) AddInput(id Hash256, n uint32, pubKey rsa.PublicK
 	return txb
 }
 
+// AddInputFrom adds all outputs in the transaction the given public key is entitled to
+// Returns total value collected
+func (txb *TransactionBuilder) AddInputFrom(tx *Transaction, pubKey rsa.PublicKey) uint32 {
+	var inputValue uint32
+
+	for i, txOut := range tx.Outs {
+		if txOut.CanBeSpentBy(pubKey) {
+			txb.AddInput(tx.Hash, uint32(i), pubKey)
+			inputValue += txOut.Value
+		}
+	}
+
+	return inputValue
+}
+
 func (txb *TransactionBuilder) AddOutput(v uint32, pubKeyHash Hash160) *TransactionBuilder {
 	txOut := TxOut{
 		Value: v,
@@ -168,6 +188,15 @@ func (txb *TransactionBuilder) AddOutput(v uint32, pubKeyHash Hash160) *Transact
 
 	txb.Transaction.Outs = append(txb.Transaction.Outs, &txOut)
 	return txb
+}
+
+func (txb *TransactionBuilder) GetOutputValue() uint32 {
+	var sum uint32
+	for _, txOut := range txb.Outs {
+		sum += txOut.Value
+	}
+
+	return sum
 }
 
 func (txb *TransactionBuilder) Sign(privKey *rsa.PrivateKey) (*Transaction, error) {

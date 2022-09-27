@@ -1,32 +1,93 @@
 package core
 
 import (
-	"errors"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"strings"
 	"time"
 )
 
 type UXTORecord struct {
-	isCoinbase    bool
-	indices       []uint32
-	amounts       map[uint]uint32
-	scriptPubKeys map[uint]*ScriptPubKey
+	TxHash        Hash256
+	IsCoinbase    bool
+	Indices       []uint32 // keep track of who is in
+	Amounts       map[uint32]uint32
+	ScriptPubKeys map[uint32]*ScriptPubKey
+}
+
+func (u *UXTORecord) AmountOf(index uint32) uint32 {
+	return u.Amounts[index]
+}
+
+func (u *UXTORecord) ScriptPubKeyOf(index uint32) *ScriptPubKey {
+	return u.ScriptPubKeys[index]
+}
+
+func (u *UXTORecord) GetTxOut(index uint32) *TxOut {
+	return &TxOut{
+		Value:        u.AmountOf(index),
+		ScriptPubKey: *u.ScriptPubKeyOf(index),
+	}
+}
+
+func NewUXTORecord(tx *Transaction) *UXTORecord {
+	indices := make([]uint32, len(tx.Outs))
+	for i, _ := range indices {
+		indices[i] = uint32(i)
+	}
+
+	amounts := make(map[uint32]uint32)
+	scripts := make(map[uint32]*ScriptPubKey)
+
+	for i, out := range tx.Outs {
+		amounts[uint32(i)] = out.Value
+		scripts[uint32(i)] = &out.ScriptPubKey
+	}
+
+	return &UXTORecord{
+		TxHash:        tx.Hash,
+		IsCoinbase:    tx.IsCoinbaseTx(),
+		Indices:       indices,
+		Amounts:       amounts,
+		ScriptPubKeys: scripts,
+	}
+}
+
+func (u *UXTORecord) Consume(txIn *TxIn) {
+	if u.TxHash != txIn.Hash {
+		return
+	}
+
+	// delete the index
+	for i, ind := range u.Indices {
+		if ind == txIn.N {
+			u.Indices = append(u.Indices[:i], u.Indices[i+1:]...)
+		}
+	}
+
+	// zero-out the amount
+	u.Amounts[txIn.N] = 0 // no partial-spend for a UXTO; all or nothing
+}
+
+func (u *UXTORecord) IsEmpty() bool {
+	return len(u.Indices) == 0
 }
 
 type BlockchainInMem struct {
 	Genesis *Block
 	Head    *Block
-	blocks  map[Hash256]*Block      // TODO: persistence
-	uxtos   map[Hash256]*UXTORecord // TODO: persistence
+	blocks  map[Hash256]*Block      // blockHash -> Block
+	uxtos   map[Hash256]*UXTORecord // txHash -> UXTO record
+	mempool []*Transaction
 }
 
 // NewBlockchain creates a new blockchain with the fist transaction being a coinbase transaction paid to the `pubKeyHash`.
 // This transaction occupied the entire genesis block.
 func NewBlockchain(pubKeyHash Hash160) *BlockchainInMem {
 	blocks := make(map[Hash256]*Block)
-	uxtos := make(map[Hash256]*UXTORecord, 0)
+	uxtos := make(map[Hash256]*UXTORecord)
 	coinbaseTx := NewCoinbaseTx([]byte("GoCoin spawned!"), pubKeyHash)
+	mempool := []*Transaction{}
 
 	bb := NewBlockBuilder().
 		Now().
@@ -47,30 +108,18 @@ func NewBlockchain(pubKeyHash Hash160) *BlockchainInMem {
 		Head:    genesis,
 		blocks:  blocks,
 		uxtos:   uxtos,
+		mempool: mempool,
 	}
 }
 
-// AddBlock scans the chain and insert the given block after its stated previous block./*
-// TODO: address branching
-func (bc *BlockchainInMem) AddBlock(b *Block) error {
-	if err := b.verified(); err != nil {
-		return fmt.Errorf("failed to add block: %w", err)
+func (bc *BlockchainInMem) IsNotSpent(txIn *TxIn) bool {
+	uxto := bc.uxtos[txIn.Hash]
+	if uxto == nil {
+		return false
 	}
 
-	// check if the block is on the longest chain, if so, change the head
-	if bc.blocks[b.PrevBlockHash] != nil {
-		bc.blocks[b.Hash] = b
-		bc.Head = b
-
-		return nil
-	}
-
-	return errors.New("cannot find parent block")
-}
-
-func (bc *BlockchainInMem) IsSpent(txHash Hash256, n uint32) bool {
-	for _, ind := range bc.uxtos[txHash].indices {
-		if ind == n {
+	for _, ind := range uxto.Indices {
+		if ind == txIn.N {
 			return true
 		}
 	}
@@ -78,26 +127,92 @@ func (bc *BlockchainInMem) IsSpent(txHash Hash256, n uint32) bool {
 	return false
 }
 
-func (bc *BlockchainInMem) updateUXTOSet(b *Block) {
+func (bc *BlockchainInMem) VerifyBlock(b *Block) error {
+	// metadata
+
+	return nil
+}
+
+// AddBlock scans the chain and insert the given block after its stated previous block./*
+// TODO: address branching
+func (bc *BlockchainInMem) AddBlock(b *Block) error {
+	// WARNING: assume chain has no fork, no orphan
+
+	// add to block storage
+	bc.blocks[b.Hash] = b
+
+	// update head
+	b.PrevBlockHash = bc.Head.Hash
+	bc.Head.NextBlockHash = b.Hash
+	bc.Head = b
+
+	// update uxto
 	for _, tx := range b.Transactions {
-		for _, txIn := range tx.Ins {
-			// delete the indices
-			// TODO
-			_ = txIn
+		// mark all inputs as spent
+		if !tx.IsCoinbaseTx() { // skip for coinbase transaction
+			for _, txIn := range tx.Ins {
+				bc.uxtos[txIn.Hash].Consume(txIn)
+			}
 		}
+
+		// add new unspent output
+		bc.uxtos[tx.Hash] = NewUXTORecord(tx)
 	}
+
+	log.WithFields(log.Fields{
+		"preBlockHash":     b.PrevBlockHash,
+		"currentBlockHash": b.Hash,
+		"height":           b.Index,
+	}).Info("Appended new block")
+
+	return nil
 }
 
-// AddTransaction verifies a transaction and if valid, add it to the mempool;
-// If invalid, an error is returned
+func (bc *BlockchainInMem) VerifyTransaction(tx *Transaction) error {
+	// signature
+	if err := tx.VerifySignature(); err != nil {
+		return fmt.Errorf("cannot verify signature: %w", err)
+	}
+
+	for _, txIn := range tx.Ins {
+		uxto := bc.uxtos[txIn.Hash]
+
+		// input is not spent
+		if uxto == nil || !Contains(uxto.Indices, txIn.N) {
+			return fmt.Errorf("uxto is spent: id=%x, index=%d", txIn.Hash[:], txIn.N)
+		}
+
+		// inputs are spendable by the pubKey
+		uxto.GetTxOut(txIn.N).CanBeSpentBy(txIn.PubKey)
+	}
+
+	// TODO: balance
+
+	return nil
+}
+
 func (bc *BlockchainInMem) AddTransaction(tx *Transaction) error {
+	bc.mempool = append(bc.mempool, tx)
 	return nil
 }
 
-// Mine collects a batch of transactions from the mempool and tries to generate a block.
-// The mining process is executed in a separate go routine.
-func (bc *BlockchainInMem) Mine() *Block {
-	return nil
+func (bc *BlockchainInMem) GenerateBlockTo(pubKeyHash Hash160, txs []*Transaction) *Block {
+	// TODO: collect transaction fee
+	bb := NewBlockBuilder()
+	bb.
+		SetDifficulty(bc.Head.Bits). // TODO: dynamic
+		SetPrevBlockHash(bc.Head.Hash).
+		SetIndex(bc.Head.Index + 1).
+		Now()
+
+	coinbase := NewCoinbaseTx([]byte("coinbase"), pubKeyHash)
+	bb.AddTransaction(nil, coinbase)
+	for _, tx := range txs {
+		bb.AddTransaction(nil, tx)
+	}
+	bb.SetMerkleTreeRoot()
+
+	return bb.Mine()
 }
 
 func (bc *BlockchainInMem) String() string {
