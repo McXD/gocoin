@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"fmt"
 	log "github.com/sirupsen/logrus"
+	"gocoin/internal/core"
 	"gocoin/internal/rpc"
 	"os"
 )
@@ -39,15 +42,9 @@ func main() {
 		log.Warn("JSON-RPC server not started: %w", err)
 	}
 
-	//bc := core.NewBlockchain()
-	//b1 := core.NewBlock(1, bc.Genesis.Hash, []byte{})
-	//bc.AddBlock(b1)
-	//
-	//b2 := core.NewBlock(2, b1.Hash, []byte{})
-	//bc.AddBlock(b2)
-	//
-	//b3 := core.NewBlock(3, b2.Hash, []byte{})
-	//bc.AddBlock(b3)
-	//
-	//fmt.Print(bc)
+	acct, _ := rsa.GenerateKey(rand.Reader, 512)
+	addr := core.HashPubKey(&acct.PublicKey)
+	bc := core.NewBlockchain(addr)
+	_ = bc
+
 }

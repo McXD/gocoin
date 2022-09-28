@@ -39,32 +39,35 @@ type Transaction struct {
 	Outs []*TxOut
 }
 
-// NewTransaction creates a new `Transaction` with hash set.
-func NewTransaction(ins []*TxIn, outs []*TxOut) *Transaction {
-	tx := Transaction{
-		Hash: Hash256{},
-		Ins:  ins,
-		Outs: outs,
+func (tx *Transaction) From() Hash160 {
+	var from Hash160
+
+	if tx.IsCoinbaseTx() {
+		return from
 	}
 
-	tx.SetHash()
+	from = HashPubKey(&tx.Ins[0].PubKey)
 
-	return &tx
+	return from
+}
+
+func (tx *Transaction) To() Hash160 {
+	return tx.Outs[0].PubKeyHash
 }
 
 func (tx *Transaction) SetHash() {
 	tx.Hash = HashTo256(tx.ToBytes(true))
 }
 
-func NewCoinbaseTx(coinbase []byte, pubKeyHash Hash160) *Transaction {
+func NewCoinbaseTx(coinbase []byte, pubKeyHash Hash160, reward uint32) *Transaction {
 	txIn := TxIn{
 		Hash:     Hash256{}, // zeros
-		N:        10000,     // TODO: specification
+		N:        reward,
 		CoinBase: coinbase,
 	}
 
 	txOut := TxOut{
-		Value:        100, // TODO: dynamic
+		Value:        reward, // TODO: dynamic
 		ScriptPubKey: ScriptPubKey{pubKeyHash},
 	}
 

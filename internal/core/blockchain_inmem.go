@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+const REWARD = 10000
+
+type UXTO struct {
+	TxHash Hash256
+	Index  uint32
+	Value  uint32
+	ScriptPubKey
+}
+
 type UXTORecord struct {
 	TxHash        Hash256
 	IsCoinbase    bool
@@ -76,9 +85,15 @@ func (u *UXTORecord) IsEmpty() bool {
 type BlockchainInMem struct {
 	Genesis *Block
 	Head    *Block
-	blocks  map[Hash256]*Block      // blockHash -> Block
-	uxtos   map[Hash256]*UXTORecord // txHash -> UXTO record
-	mempool []*Transaction
+	blocks  map[Hash256]*Block       // blockHash -> Block
+	uxtos   map[Hash256]*UXTORecord  // txHash -> UXTO record
+	mempool map[Hash256]*Transaction //txHash -> tx
+}
+
+func (bc *BlockchainInMem) GetBlock(id Hash256) *Block {
+	b, _ := bc.blocks[id]
+
+	return b
 }
 
 // NewBlockchain creates a new blockchain with the fist transaction being a coinbase transaction paid to the `pubKeyHash`.
@@ -86,8 +101,8 @@ type BlockchainInMem struct {
 func NewBlockchain(pubKeyHash Hash160) *BlockchainInMem {
 	blocks := make(map[Hash256]*Block)
 	uxtos := make(map[Hash256]*UXTORecord)
-	coinbaseTx := NewCoinbaseTx([]byte("GoCoin spawned!"), pubKeyHash)
-	mempool := []*Transaction{}
+	coinbaseTx := NewCoinbaseTx([]byte("GoCoin spawned!"), pubKeyHash, REWARD)
+	mempool := make(map[Hash256]*Transaction)
 
 	bb := NewBlockBuilder().
 		Now().
@@ -101,7 +116,8 @@ func NewBlockchain(pubKeyHash Hash160) *BlockchainInMem {
 	genesis := bb.Mine()
 
 	blocks[genesis.Hash] = genesis
-	//uxtos[coinbaseTx.Hash]
+
+	uxtos[coinbaseTx.Hash] = NewUXTORecord(coinbaseTx)
 
 	return &BlockchainInMem{
 		Genesis: genesis,
@@ -192,7 +208,12 @@ func (bc *BlockchainInMem) VerifyTransaction(tx *Transaction) error {
 }
 
 func (bc *BlockchainInMem) AddTransaction(tx *Transaction) error {
-	bc.mempool = append(bc.mempool, tx)
+	if err := bc.VerifyTransaction(tx); err != nil {
+		return fmt.Errorf("transaction verification failed: %w", err)
+	}
+
+	bc.mempool[tx.Hash] = tx
+
 	return nil
 }
 
@@ -205,7 +226,7 @@ func (bc *BlockchainInMem) GenerateBlockTo(pubKeyHash Hash160, txs []*Transactio
 		SetIndex(bc.Head.Index + 1).
 		Now()
 
-	coinbase := NewCoinbaseTx([]byte("coinbase"), pubKeyHash)
+	coinbase := NewCoinbaseTx([]byte("coinbase"), pubKeyHash, REWARD)
 	bb.AddTransaction(nil, coinbase)
 	for _, tx := range txs {
 		bb.AddTransaction(nil, tx)
@@ -213,6 +234,19 @@ func (bc *BlockchainInMem) GenerateBlockTo(pubKeyHash Hash160, txs []*Transactio
 	bb.SetMerkleTreeRoot()
 
 	return bb.Mine()
+}
+
+// Mine collects all transaction in the mempool and mine a block out of it
+func (bc *BlockchainInMem) Mine(pubKeyHash Hash160) *Block {
+	txs := make([]*Transaction, 0)
+
+	for id, tx := range bc.mempool {
+		txs = append(txs, tx)
+
+		bc.mempool[id] = nil // don't delete, we still need that object
+	}
+
+	return bc.GenerateBlockTo(pubKeyHash, txs)
 }
 
 func (bc *BlockchainInMem) String() string {
