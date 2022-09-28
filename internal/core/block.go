@@ -20,6 +20,7 @@ type Block struct {
 	Transactions  []*Transaction
 	Bits          int
 	MerkleRoot    Hash256
+	Reward        uint32
 }
 
 func (b *Block) verified() error {
@@ -63,7 +64,12 @@ func (bb *BlockBuilder) SetDifficulty(bits int) *BlockBuilder {
 	return bb
 }
 
-func (bb *BlockBuilder) AddTransaction(ctx *BlockchainInMem, tx *Transaction) (*BlockBuilder, error) {
+func (bb *BlockBuilder) SetReward(reward uint32) *BlockBuilder {
+	bb.Reward = reward
+	return bb
+}
+
+func (bb *BlockBuilder) AddTransaction(ctx *Blockchain, tx *Transaction) (*BlockBuilder, error) {
 	//if ctx != nil {
 	//	if err := bb.VerifyTransaction(ctx, tx); err != nil {
 	//		return bb, fmt.Errorf("transaction verification failed: %w", err)
@@ -146,7 +152,7 @@ func (bb *BlockBuilder) hash() {
 	bb.Hash = sha256.Sum256(header)
 }
 
-//func (bb *BlockBuilder) VerifyTransaction(ctx *BlockchainInMem, tx *Transaction) error {
+//func (bb *BlockBuilder) VerifyTransaction(ctx *Blockchain, tx *Transaction) error {
 //	for _, txIn := range tx.Ins {
 //		// verify that the referenced transaction output is not spent
 //		if ctx.IsSpent(txIn.Hash, txIn.N) {

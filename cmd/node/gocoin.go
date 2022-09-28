@@ -1,12 +1,10 @@
 package main
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"gocoin/internal/core"
-	"gocoin/internal/rpc"
+	"gocoin/internal/wallet"
 	"os"
 )
 
@@ -22,7 +20,7 @@ func greeting() {
 
 func init() {
 	// Log as JSON instead of the default ASCII formatter.
-	//log.SetFormatter(&log.JSONFormatter{})
+	// log.SetFormatter(&log.JSONFormatter{})
 
 	// Output to stdout instead of the default stderr
 	// Can be any io.Writer, see below for File example
@@ -36,15 +34,23 @@ func init() {
 func main() {
 	greeting()
 
-	var server = rpc.NewServer(8765)
+	w := wallet.NewWallet()
+	log.WithFields(log.Fields{
+		"address": fmt.Sprintf("%X", w.Addresses[0]),
+	}).Info("Created primary wallet with address.")
 
-	if err := server.Run(); err != nil {
-		log.Warn("JSON-RPC server not started: %w", err)
+	bc := core.NewBlockchain(w.Addresses[0], 23, 1_000_000_000)
+	log.WithFields(log.Fields{
+		"genesisId":  bc.Head.Hash,
+		"difficulty": bc.Head.Bits,
+		"reward":     bc.Head.Reward,
+	}).Info("Created blockchain")
+
+	for {
+		b := bc.Mine(w.Addresses[0])
+		if err := bc.AddBlock(b); err != nil {
+			log.Warn("error adding block: %s", err)
+		}
+		w.ProcessBlock(b)
 	}
-
-	acct, _ := rsa.GenerateKey(rand.Reader, 512)
-	addr := core.HashPubKey(&acct.PublicKey)
-	bc := core.NewBlockchain(addr)
-	_ = bc
-
 }

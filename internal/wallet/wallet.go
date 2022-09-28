@@ -17,7 +17,7 @@ type Wallet struct {
 	Receives map[core.Hash256]*core.Transaction
 	Spends   map[core.Hash256]*core.Transaction
 
-	blockchain *core.BlockchainInMem
+	blockchain *core.Blockchain
 }
 
 // NewWallet returns a wallet with one address
@@ -160,7 +160,7 @@ func (w *Wallet) ProcessBlock(block *core.Block) {
 	}
 }
 
-func (w *Wallet) Connect(bc *core.BlockchainInMem) {
+func (w *Wallet) Connect(bc *core.Blockchain) {
 	w.blockchain = bc
 
 	// scan blocks

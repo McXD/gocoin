@@ -41,17 +41,17 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 
 func TestWallet_Connect(t *testing.T) {
 	w := NewWallet()
-	bc := core.NewBlockchain(w.Addresses[0])
+	bc := core.NewBlockchain(w.Addresses[0], 20, 1000)
 	w.Connect(bc)
 
-	if b := w.Balance(w.Addresses[0]); b != core.REWARD {
-		t.Fatalf("Initial balance is %d; want %d", b, core.REWARD)
+	if b := w.Balance(w.Addresses[0]); b != 1000 {
+		t.Fatalf("Initial balance is %d; want %d", b, 1000)
 	}
 }
 
 func TestWallet_Send(t *testing.T) {
 	w := NewWallet()
-	bc := core.NewBlockchain(w.Addresses[0])
+	bc := core.NewBlockchain(w.Addresses[0], 20, 1000)
 	w.Connect(bc)
 
 	w.NewAddress()
@@ -64,8 +64,8 @@ func TestWallet_Send(t *testing.T) {
 		bc.AddBlock(b)
 		w.ProcessBlock(b)
 
-		if b := w.Balance(w.Addresses[0]); b != core.REWARD-100 {
-			t.Fatalf("Address0 balance is %d; want %d", b, core.REWARD-100)
+		if b := w.Balance(w.Addresses[0]); b != 1000-100 {
+			t.Fatalf("Address0 balance is %d; want %d", b, 1000-100)
 		}
 
 		if b := w.Balance(w.Addresses[1]); b != 100 {
