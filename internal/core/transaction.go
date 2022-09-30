@@ -11,9 +11,24 @@ type ScriptPubKey struct {
 	PubKeyHash Hash160
 }
 
+func (spk *ScriptPubKey) IsGeneratedFrom(pk *rsa.PublicKey) bool {
+	return spk.PubKeyHash == HashPubKey(pk)
+}
+
 type ScriptSig struct {
-	PubKey    rsa.PublicKey
+	PK        *rsa.PublicKey
 	Signature []byte
+}
+
+type TxIn struct {
+	PrevTxId Hash256
+	N        uint32 // output index
+	ScriptSig
+	Coinbase []byte
+}
+
+func (txIn *TxIn) SpentBy() Hash160 {
+	return HashPubKey(txIn.PK)
 }
 
 type TxOut struct {
@@ -21,191 +36,277 @@ type TxOut struct {
 	ScriptPubKey
 }
 
-// CanBeSpentBy checks whether the given pubKey is entitled to this output
-func (txOut *TxOut) CanBeSpentBy(pubKey rsa.PublicKey) bool {
-	return HashPubKey(&pubKey) == txOut.PubKeyHash
+func (txOut *TxOut) AddressedTo() Hash160 {
+	return txOut.PubKeyHash
 }
 
-type TxIn struct {
-	Hash Hash256 // Txid
-	N    uint32  // output index
-	ScriptSig
-	CoinBase []byte
+// CanBeSpentBy checks whether the given pubKey is entitled to this output
+func (txOut *TxOut) CanBeSpentBy(pk *rsa.PublicKey) bool {
+	return txOut.ScriptPubKey.IsGeneratedFrom(pk)
+}
+
+func (txOut *TxOut) Serialized() []byte {
+	return []byte{}
+}
+
+type UXTO struct {
+	TxId Hash256
+	N    uint32
+	*TxOut
 }
 
 type Transaction struct {
-	Hash Hash256
 	Ins  []*TxIn
 	Outs []*TxOut
 }
 
-func (tx *Transaction) From() Hash160 {
-	var from Hash160
-
-	if tx.IsCoinbaseTx() {
-		return from
-	}
-
-	from = HashPubKey(&tx.Ins[0].PubKey)
-
-	return from
+func (tx *Transaction) Hash() Hash256 {
+	return HashTo256(tx.Serialized())
 }
 
-func (tx *Transaction) To() Hash160 {
-	return tx.Outs[0].PubKeyHash
-}
+func (tx *Transaction) Serialized() []byte {
+	var data []byte
 
-func (tx *Transaction) SetHash() {
-	tx.Hash = HashTo256(tx.ToBytes(true))
-}
-
-func NewCoinbaseTx(coinbase []byte, pubKeyHash Hash160, reward uint32) *Transaction {
-	txIn := TxIn{
-		Hash:     Hash256{}, // zeros
-		N:        reward,
-		CoinBase: coinbase,
-	}
-
-	txOut := TxOut{
-		Value:        reward, // TODO: dynamic
-		ScriptPubKey: ScriptPubKey{pubKeyHash},
-	}
-
-	tx := Transaction{
-		Ins:  []*TxIn{&txIn},
-		Outs: []*TxOut{&txOut},
-	}
-
-	tx.SetHash()
-
-	return &tx
-}
-
-// ToBytes returns the raw bytes of the transaction for signing or hashing
-func (tx *Transaction) ToBytes(withSig bool) []byte {
-	var raw []byte
-
-	// TxIns
 	for _, txIn := range tx.Ins {
-		raw = append(raw, txIn.Hash[:]...)        // tx reference
-		raw = append(raw, UintToBytes(txIn.N)...) // index
-		if withSig {
-			raw = append(raw, txIn.Signature...) // signature
+		data = append(data, txIn.PrevTxId[:]...)
+		data = append(data, UintToBytes(txIn.N)...)
+
+		if txIn.PrevTxId == [32]byte{} { // coinbase input
+			data = append(data, txIn.Coinbase[:]...)
 		}
-		//raw = append(raw, txIn.PubKey.N.Bytes()...)              // pubKey: N TODO: segmentation fault
-		raw = append(raw, UintToBytes(uint32(txIn.PubKey.E))...) // pubKey: E
 	}
 
-	// TxOuts
 	for _, txOut := range tx.Outs {
-		raw = append(raw, UintToBytes(txOut.Value)...) // value
-		raw = append(raw, txOut.PubKeyHash[:]...)      // scriptPubKey (only the public key in our case)
+		data = append(data, txOut.PubKeyHash[:]...)
+		data = append(data, UintToBytes(txOut.Value)[:]...)
 	}
 
-	return raw
+	return data
 }
 
-func (tx *Transaction) Sign(privKey *rsa.PrivateKey) error {
-	var raw []byte
-	var txHash Hash256
-
-	raw = tx.ToBytes(false)
-	txHash = DoubleHashTo256(raw)
-
-	// sign txHash
-	rng := rand.Reader
-	sig, err := rsa.SignPKCS1v15(rng, privKey, crypto.SHA256, txHash[:])
-	if err != nil {
-		return err
-	}
-
+func (tx *Transaction) InputOf(prevTxId Hash256, n uint32) *TxIn {
 	for _, txIn := range tx.Ins {
-		txIn.Signature = sig
-	}
-
-	return nil
-}
-
-func (tx *Transaction) VerifySignature() error {
-	raw := tx.ToBytes(false)
-	txHash := DoubleHashTo256(raw)
-
-	for _, txIn := range tx.Ins {
-		err := rsa.VerifyPKCS1v15(&txIn.PubKey, crypto.SHA256, txHash[:], txIn.Signature)
-		if err != nil {
-			return fmt.Errorf("invalid signature for input %x:%d: %w", txIn.Hash[:], txIn.N, err)
+		if txIn.PrevTxId == prevTxId && txIn.N == n { // find the consuming input
+			return txIn
 		}
 	}
 
 	return nil
+}
+
+func (tx *Transaction) generateSigningDigest(uxto *UXTO) []byte {
+	var data []byte
+
+	subScript := uxto.PubKeyHash
+
+	for _, txIn := range tx.Ins {
+		data = append(data, txIn.PrevTxId[:]...)
+		data = append(data, UintToBytes(txIn.N)...)
+
+		if uxto.TxId == txIn.PrevTxId && uxto.N == txIn.N {
+			data = append(data, subScript[:]...)
+		}
+	}
+
+	for _, txOut := range tx.Outs {
+		data = append(data, txOut.PubKeyHash[:]...)
+		data = append(data, UintToBytes(txOut.Value)[:]...)
+	}
+
+	digest := DoubleHashTo256(data)
+
+	return digest[:]
+}
+
+func (tx *Transaction) SignTxIn(uxto *UXTO, sk *rsa.PrivateKey) error {
+	digest := tx.generateSigningDigest(uxto)
+
+	if sig, err := sk.Sign(rand.Reader, digest[:], crypto.SHA256); err != nil {
+		return err
+	} else {
+		if txIn := tx.InputOf(uxto.TxId, uxto.N); txIn != nil {
+			txIn.Signature = sig
+			return nil
+		} else { // no input matched
+			return fmt.Errorf("no txIn matches the given uxto")
+		}
+	}
+}
+
+func (tx *Transaction) VerifyTxIn(uxto *UXTO, pk *rsa.PublicKey) error { // this is equivalent to running Script in Bitcoin
+	digest := tx.generateSigningDigest(uxto)
+
+	if txIn := tx.InputOf(uxto.TxId, uxto.N); txIn != nil {
+		if !uxto.CanBeSpentBy(pk) {
+			return fmt.Errorf("uxto cannot be spent")
+		}
+
+		if err := rsa.VerifyPKCS1v15(pk, crypto.SHA256, digest, txIn.Signature); err != nil {
+			return fmt.Errorf("cannot verify signature: %w", err)
+		}
+
+		return nil
+	} else { // no input matched
+		return fmt.Errorf("no txIn matches the given uxto")
+	}
+}
+
+func (tx *Transaction) Verify(refs map[Hash256]*UXTO) error {
+	var inValue uint32
+
+	// size
+	if len(tx.Ins) == 0 {
+		return fmt.Errorf("transaction contains 0 input")
+	}
+
+	if len(tx.Outs) == 0 {
+		return fmt.Errorf("transaction contains 0 output")
+	}
+
+	// sender
+	if !tx.IsCoinbaseTx() {
+		sender := tx.Ins[0].SpentBy()
+		for _, txIn := range tx.Ins {
+			if txIn.SpentBy() != sender {
+				return fmt.Errorf("transaction has multiple senders")
+			}
+		}
+	} else {
+		if len(tx.Ins) != 1 {
+			return fmt.Errorf("coinbase transaction has more than 1 input")
+		}
+	}
+
+	// skip for coinbase tx
+	if !tx.IsCoinbaseTx() { // in a coinbase tx, input value is essentially zero
+		for _, txIn := range tx.Ins {
+			if uxto := refs[txIn.PrevTxId]; uxto == nil { // no double-spend
+				return fmt.Errorf("transaction input not found in UXTO set")
+			} else {
+				// "running Script"
+				if err := tx.VerifyTxIn(uxto, txIn.PK); err != nil {
+					return fmt.Errorf("txIn verification failed: %w", err)
+				}
+
+				// accumulate inValue
+				inValue += uxto.Value
+			}
+		}
+
+		// balance
+		if inValue < tx.OutValue() {
+			return fmt.Errorf("out-value is bigger than in-value")
+		}
+	}
+
+	return nil
+}
+
+// From returns the address of the transaction payer.
+// There is no a "To()" counterpart as a transaction can be sent to multiple addresses (e.g., change).
+func (tx *Transaction) From() Hash160 {
+	if tx.IsCoinbaseTx() {
+		return Hash160{}
+	}
+
+	return tx.Ins[0].SpentBy()
+}
+
+func (tx *Transaction) OutValue() (outValue uint32) {
+	for _, txOut := range tx.Outs {
+		outValue += txOut.Value
+	}
+
+	return outValue
 }
 
 func (tx *Transaction) IsCoinbaseTx() bool {
-	return len(tx.Ins) == 1 && len(tx.Ins[0].CoinBase) != 0
+	return len(tx.Ins) == 1 && len(tx.Ins[0].Coinbase) != 0
 }
 
 type TransactionBuilder struct {
+	uxtos   map[Hash256][]*UXTO
+	inValue uint32
 	*Transaction
 }
 
 func NewTransactionBuilder() *TransactionBuilder {
-	return &TransactionBuilder{&Transaction{}}
+	return &TransactionBuilder{
+		uxtos:   make(map[Hash256][]*UXTO),
+		inValue: 0,
+		Transaction: &Transaction{
+			Ins:  nil,
+			Outs: nil,
+		},
+	}
 }
 
-func (txb *TransactionBuilder) AddInput(id Hash256, n uint32, pubKey rsa.PublicKey) *TransactionBuilder {
-	txIn := TxIn{
-		Hash: id,
-		N:    n,
+// AddInputFrom adds uxto to the tx input set
+func (txb *TransactionBuilder) AddInputFrom(uxto *UXTO, pk *rsa.PublicKey) *TransactionBuilder {
+	txIn := &TxIn{
+		PrevTxId: uxto.TxId,
+		N:        uxto.N,
 		ScriptSig: ScriptSig{
-			PubKey: pubKey,
+			PK: pk,
 		},
-		CoinBase: nil,
+		Coinbase: nil,
 	}
 
-	txb.Transaction.Ins = append(txb.Transaction.Ins, &txIn)
+	txb.Ins = append(txb.Ins, txIn)
+	txb.inValue += uxto.Value
+	txb.uxtos[uxto.TxId] = append(txb.uxtos[uxto.TxId], uxto)
 	return txb
 }
 
-// AddInputFrom adds all outputs in the transaction the given public key is entitled to
-// Returns total value collected
-func (txb *TransactionBuilder) AddInputFrom(tx *Transaction, pubKey rsa.PublicKey) uint32 {
-	var inputValue uint32
-
-	for i, txOut := range tx.Outs {
-		if txOut.CanBeSpentBy(pubKey) {
-			txb.AddInput(tx.Hash, uint32(i), pubKey)
-			inputValue += txOut.Value
-		}
-	}
-
-	return inputValue
-}
-
 func (txb *TransactionBuilder) AddOutput(v uint32, pubKeyHash Hash160) *TransactionBuilder {
-	txOut := TxOut{
+	txOut := &TxOut{
 		Value: v,
 		ScriptPubKey: ScriptPubKey{
 			PubKeyHash: pubKeyHash,
 		},
 	}
 
-	txb.Transaction.Outs = append(txb.Transaction.Outs, &txOut)
+	txb.Outs = append(txb.Outs, txOut)
 	return txb
 }
 
-func (txb *TransactionBuilder) GetOutputValue() uint32 {
-	var sum uint32
-	for _, txOut := range txb.Outs {
-		sum += txOut.Value
-	}
-
-	return sum
+func (txb *TransactionBuilder) AddChange(txFee uint32) *TransactionBuilder {
+	txb.AddOutput(txb.inValue-txb.inValue-txFee, txb.From())
+	return txb
 }
 
-func (txb *TransactionBuilder) Sign(privKey *rsa.PrivateKey) (*Transaction, error) {
-	if err := txb.Transaction.Sign(privKey); err != nil {
-		return txb.Transaction, fmt.Errorf("failed to sign transaction: %w", err)
+func (txb *TransactionBuilder) Build() *Transaction {
+	return txb.Transaction
+}
+
+func (txb *TransactionBuilder) Sign(privKey *rsa.PrivateKey) *Transaction {
+	for _, uxtos := range txb.uxtos {
+		for _, uxto := range uxtos {
+			txb.SignTxIn(uxto, privKey) // shouldn't err
+		}
 	}
 
-	return txb.Transaction, nil
+	return txb.Transaction
+}
+
+func NewCoinBaseTransaction(coinbase []byte, payTo Hash160, baseValue uint32, txFee uint32) *Transaction {
+	txIn := &TxIn{
+		PrevTxId: Hash256{},
+		N:        0xcafebabe,
+		Coinbase: coinbase,
+	}
+
+	txOut := &TxOut{
+		Value: baseValue + txFee,
+		ScriptPubKey: ScriptPubKey{
+			PubKeyHash: payTo,
+		},
+	}
+
+	// no signature is required since there's no ScriptPubKey
+
+	return &Transaction{
+		Ins:  []*TxIn{txIn},
+		Outs: []*TxOut{txOut},
+	}
 }

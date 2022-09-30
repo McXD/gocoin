@@ -7,10 +7,9 @@ import (
 )
 
 type Hash256 [32]byte
-type Hash160 [20]byte
 
 func (hash Hash256) String() string {
-	return fmt.Sprintf("%X", [32]byte(hash))
+	return fmt.Sprintf("%X", hash[:])
 }
 
 func HashTo256(data []byte) Hash256 {
@@ -22,6 +21,8 @@ func DoubleHashTo256(data []byte) Hash256 {
 	return HashTo256(ret[:])
 }
 
+type Hash160 [20]byte
+
 func HashTo160(data []byte) Hash160 {
 	var sum160 Hash160
 
@@ -31,4 +32,8 @@ func HashTo160(data []byte) Hash160 {
 	copy(sum160[:], md.Sum(nil))
 
 	return sum160
+}
+
+func (hash *Hash160) String() string {
+	return fmt.Sprintf("%X", hash[:])
 }

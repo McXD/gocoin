@@ -6,55 +6,84 @@ import (
 	"testing"
 )
 
-func TestTransaction_IsCoinbaseTx(t *testing.T) {
-	acct, _ := rsa.GenerateKey(rand.Reader, 512)
-	coinbaseTx := NewCoinbaseTx([]byte("coinbase"), HashPubKey(&acct.PublicKey))
+var sk1, _ = rsa.GenerateKey(rand.Reader, 512)
+var addr1 = HashPubKey(&sk1.PublicKey)
+var uxto1 = NewUXTO(addr1, 100)
+var sk2, _ = rsa.GenerateKey(rand.Reader, 512)
+var addr2 = HashPubKey(&sk1.PublicKey)
+var uxto2 = NewUXTO(addr1, 100)
 
-	txIn := TxIn{coinbaseTx.Hash, 0,
-		ScriptSig{
-			PubKey:    acct.PublicKey,
-			Signature: nil,
+func NewUXTO(to Hash160, v uint32) *UXTO {
+	return &UXTO{
+		TxId: RandomHash256(),
+		N:    0,
+		TxOut: &TxOut{
+			Value:        v,
+			ScriptPubKey: ScriptPubKey{to},
 		},
-		nil,
-	}
-
-	txOut := TxOut{
-		Value:        10,
-		ScriptPubKey: ScriptPubKey{PubKeyHash: HashPubKey(&acct.PublicKey)},
-	}
-
-	nonCoinbaseTx := Transaction{
-		Ins:  []*TxIn{&txIn},
-		Outs: []*TxOut{&txOut},
-	}
-
-	nonCoinbaseTx.Sign(acct)
-
-	if !coinbaseTx.IsCoinbaseTx() {
-		t.Fatalf("conbaseTx.IsCoinbaseTx() = false; want true")
-	}
-
-	if nonCoinbaseTx.IsCoinbaseTx() {
-		t.Fatalf("nonCoinbaseTx.IsCoinbaseTx() = true; want false")
 	}
 }
 
 func TestTransaction_SignAndVerify(t *testing.T) {
-	txIn := TxIn{
-		Hash256{}, 0, ScriptSig{acct1.PublicKey, nil}, nil,
+	tx := Transaction{
+		Ins: []*TxIn{
+			{
+				PrevTxId: uxto1.TxId,
+				N:        uxto1.N,
+				ScriptSig: ScriptSig{
+					PK:        &sk1.PublicKey,
+					Signature: nil,
+				},
+				Coinbase: nil,
+			},
+		},
+		Outs: []*TxOut{
+			{
+				Value:        uxto1.Value,
+				ScriptPubKey: ScriptPubKey{PubKeyHash: addr1},
+			},
+		},
 	}
-	txOut := TxOut{
-		10, ScriptPubKey{HashPubKey(&acct1.PublicKey)},
-	}
-	tx := Transaction{Hash256{}, []*TxIn{&txIn}, []*TxOut{&txOut}}
 
-	if err := tx.Sign(acct1); err != nil {
-		t.Fatalf("tx.Sign(acct1) errored: %s", err)
+	if err := tx.SignTxIn(uxto1, sk1); err != nil {
+		t.Fatalf("failed to sign txIn: %s", err)
 	}
 
-	tx.SetHash()
+	if err := tx.VerifyTxIn(uxto1, &sk1.PublicKey); err != nil {
+		t.Fatalf("failed to verify txIn: %s", err)
+	}
 
-	if err := tx.VerifySignature(); err != nil {
-		t.Fatalf("tx.VerifySignature() = false; want true: %s", err)
+	if err := tx.VerifyTxIn(uxto2, &sk1.PublicKey); err == nil {
+		t.Fatalf("expected verification error; got nil")
+	}
+
+	if err := tx.Verify(map[Hash256]*UXTO{uxto1.TxId: uxto1}); err != nil {
+		t.Fatalf("failed to verify transaction: %s", err)
+	}
+}
+
+func TestTransactionBuilder(t *testing.T) {
+	txb := NewTransactionBuilder()
+
+	tx := txb.
+		AddInputFrom(uxto1, &sk1.PublicKey).
+		AddOutput(50, addr2).
+		AddChange(1).
+		Sign(sk1)
+
+	if err := tx.Verify(map[Hash256]*UXTO{uxto1.TxId: uxto1}); err != nil {
+		t.Fatalf("failed to verify built transaction: %s", err)
+	}
+}
+
+func TestNewCoinBaseTransaction(t *testing.T) {
+	cb := NewCoinBaseTransaction([]byte("Coinbase!"), addr1, 100, 1)
+
+	if !cb.IsCoinbaseTx() {
+		t.Fatalf("cb is not of type coinbase")
+	}
+
+	if err := cb.Verify(make(map[Hash256]*UXTO)); err != nil {
+		t.Fatalf("cb is not verified: %s", err)
 	}
 }

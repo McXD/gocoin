@@ -13,7 +13,7 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 	var wAddr2 = w.NewAddress()
 
 	// wAddr1: 100
-	coinbase := core.NewCoinbaseTx([]byte("coinbase"), wAddr1, 100)
+	coinbase := core.NewCoinbaseTransaction([]byte("coinbase"), wAddr1, 100)
 
 	w.ProcessTransaction(coinbase)
 	if b1 := w.Balances[wAddr1]; b1 != 100 {

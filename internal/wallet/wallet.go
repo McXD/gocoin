@@ -105,8 +105,8 @@ func (w *Wallet) GetTransaction(id core.Hash256) *core.Transaction {
 func (w *Wallet) ProcessTransaction(tx *core.Transaction) {
 	// if an uxto occurs in input set, delete it
 	for _, txIn := range tx.Ins {
-		if uxto, ok := w.uxtos[txIn.Hash]; ok && uxto.Index == txIn.N {
-			delete(w.uxtos, txIn.Hash)
+		if uxto, ok := w.uxtos[txIn.PrevTxId]; ok && uxto.Index == txIn.N {
+			delete(w.uxtos, txIn.PrevTxId)
 
 			// update balance
 			w.Balances[uxto.PubKeyHash] -= uxto.Value
