@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"github.com/cbergoon/merkletree"
 )
 
 type ScriptPubKey struct {
@@ -53,6 +54,50 @@ type UXTO struct {
 	TxId Hash256
 	N    uint32
 	*TxOut
+}
+
+type UXTOSet struct {
+	uxtos map[Hash256][]*UXTO
+}
+
+func NewUXTOSet() *UXTOSet {
+	return &UXTOSet{uxtos: make(map[Hash256][]*UXTO)}
+}
+
+func (uSet *UXTOSet) Add(uxto *UXTO) {
+	if uxto == nil {
+		return
+	}
+
+	if uSet.uxtos[uxto.TxId] == nil {
+		uSet.uxtos[uxto.TxId] = []*UXTO{}
+	}
+
+	uSet.uxtos[uxto.TxId] = append(uSet.uxtos[uxto.TxId], uxto)
+}
+
+func (uSet *UXTOSet) First(txId Hash256) *UXTO {
+	uxtos := uSet.uxtos[txId]
+	if uxtos == nil || len(uxtos) == 0 {
+		return nil
+	}
+
+	return uxtos[0]
+}
+
+func (uSet *UXTOSet) Get(txId Hash256, n uint32) *UXTO {
+	uxtos := uSet.uxtos[txId]
+	if uxtos == nil || len(uxtos) == 0 {
+		return nil
+	}
+
+	for _, uxto := range uxtos {
+		if uxto.N == n {
+			return uxto
+		}
+	}
+
+	return nil
 }
 
 type Transaction struct {
@@ -151,7 +196,7 @@ func (tx *Transaction) VerifyTxIn(uxto *UXTO, pk *rsa.PublicKey) error { // this
 	}
 }
 
-func (tx *Transaction) Verify(refs map[Hash256]*UXTO) error {
+func (tx *Transaction) Verify(uSet *UXTOSet) error {
 	var inValue uint32
 
 	// size
@@ -180,7 +225,7 @@ func (tx *Transaction) Verify(refs map[Hash256]*UXTO) error {
 	// skip for coinbase tx
 	if !tx.IsCoinbaseTx() { // in a coinbase tx, input value is essentially zero
 		for _, txIn := range tx.Ins {
-			if uxto := refs[txIn.PrevTxId]; uxto == nil { // no double-spend
+			if uxto := uSet.Get(txIn.PrevTxId, txIn.N); uxto == nil { // no double-spend
 				return fmt.Errorf("transaction input not found in UXTO set")
 			} else {
 				// "running Script"
@@ -194,7 +239,7 @@ func (tx *Transaction) Verify(refs map[Hash256]*UXTO) error {
 		}
 
 		// balance
-		if inValue < tx.OutValue() {
+		if outValue, overflow := tx.CalculateOutValue(); inValue < outValue || overflow {
 			return fmt.Errorf("out-value is bigger than in-value")
 		}
 	}
@@ -212,16 +257,41 @@ func (tx *Transaction) From() Hash160 {
 	return tx.Ins[0].SpentBy()
 }
 
-func (tx *Transaction) OutValue() (outValue uint32) {
+func (tx *Transaction) CalculateOutValue() (outValue uint32, overflow bool) {
 	for _, txOut := range tx.Outs {
-		outValue += txOut.Value
+		// overflow check
+		twoSum := outValue + txOut.Value
+		overflow = twoSum < outValue || twoSum < txOut.Value
+		outValue = twoSum
 	}
 
-	return outValue
+	return outValue, overflow
 }
 
 func (tx *Transaction) IsCoinbaseTx() bool {
 	return len(tx.Ins) == 1 && len(tx.Ins[0].Coinbase) != 0
+}
+
+// CalculateHash is implements the interface function required by merkletree.Content
+func (tx Transaction) CalculateHash() ([]byte, error) {
+	hash := tx.Hash()
+	return hash[:], nil
+}
+
+func (tx Transaction) Equals(other merkletree.Content) (bool, error) {
+	otherHash, err := other.CalculateHash()
+	thisHash := tx.Hash()
+
+	if err != nil {
+		return false, err
+	}
+	for i, v := range otherHash {
+		if v != thisHash[i] {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
 
 type TransactionBuilder struct {
@@ -271,7 +341,8 @@ func (txb *TransactionBuilder) AddOutput(v uint32, pubKeyHash Hash160) *Transact
 }
 
 func (txb *TransactionBuilder) AddChange(txFee uint32) *TransactionBuilder {
-	txb.AddOutput(txb.inValue-txb.inValue-txFee, txb.From())
+	currentOut, _ := txb.CalculateOutValue()
+	txb.AddOutput(txb.inValue-currentOut-txFee, txb.From())
 	return txb
 }
 
@@ -289,7 +360,7 @@ func (txb *TransactionBuilder) Sign(privKey *rsa.PrivateKey) *Transaction {
 	return txb.Transaction
 }
 
-func NewCoinBaseTransaction(coinbase []byte, payTo Hash160, baseValue uint32, txFee uint32) *Transaction {
+func NewCoinBaseTransaction(coinbase []byte, payTo Hash160, blockReward uint32, txFee uint32) *Transaction {
 	txIn := &TxIn{
 		PrevTxId: Hash256{},
 		N:        0xcafebabe,
@@ -297,7 +368,7 @@ func NewCoinBaseTransaction(coinbase []byte, payTo Hash160, baseValue uint32, tx
 	}
 
 	txOut := &TxOut{
-		Value: baseValue + txFee,
+		Value: blockReward + txFee,
 		ScriptPubKey: ScriptPubKey{
 			PubKeyHash: payTo,
 		},

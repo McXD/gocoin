@@ -4,12 +4,24 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"golang.org/x/crypto/ripemd160"
+	"math/big"
 )
 
 type Hash256 [32]byte
 
 func (hash Hash256) String() string {
 	return fmt.Sprintf("%X", hash[:])
+}
+
+func Hash256FromSlice(byteSlice []byte) Hash256 {
+	var arr [32]byte
+	copy(arr[:], byteSlice)
+
+	return arr
+}
+
+func (hash Hash256) Int() *big.Int {
+	return big.NewInt(0).SetBytes(hash[:])
 }
 
 func HashTo256(data []byte) Hash256 {
