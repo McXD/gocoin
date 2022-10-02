@@ -120,3 +120,32 @@ func DeserializeTxOut(buf []byte) *core.TxOut {
 
 	return &txOut
 }
+
+func SerializeUXTO(u *core.UXTO) []byte {
+	var buf []byte
+
+	buf = append(buf, u.TxId[:]...)               // TxId, 32
+	buf = append(buf, Uint32ToBytes(u.N)...)      // N, 4
+	buf = append(buf, SerializeTxOut(u.TxOut)...) // TxOut (PubKey and Value), 24
+
+	return buf
+}
+
+func DeserializeUXTO(buf []byte) *core.UXTO {
+	u := &core.UXTO{
+		TxId:  core.Hash256{},
+		N:     0,
+		TxOut: nil,
+	}
+
+	p := 0
+	u.TxId = core.Hash256FromSlice(buf[:32])
+
+	p += 32
+	u.N = Uint32FromBytes(buf[p : p+4])
+
+	p += 4
+	u.TxOut = DeserializeTxOut(buf[p : p+24])
+
+	return u
+}

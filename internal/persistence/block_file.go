@@ -3,101 +3,134 @@ package persistence
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/gob"
 	"fmt"
 	"gocoin/internal/core"
+	myBinary "gocoin/internal/persistence/binary"
 	"os"
 )
 
 const (
-	MAGIC    = 0x11223344
-	BLK_BASE = "data/blk"
-	REV_BASE = "data/rev"
-	N_BLK    = 100
+	S_UXTO                 = 60 // size of an UXTO
+	MAGIC_DIV_BLOCK uint64 = 0x11_22_33_44_55_66_77_88
+	BLK_BASE               = "data/blk"
+	REV_BASE               = "data/rev"
 )
 
-var DIV []byte
+var DIV_BLOCK []byte
 
 func init() {
 	buf := [8]byte{}
-	binary.PutVarint(buf[:], MAGIC)
-	DIV = buf[:]
+	binary.BigEndian.PutUint64(buf[:], MAGIC_DIV_BLOCK)
+	DIV_BLOCK = buf[:]
 }
 
 type BlockFile struct {
-	f      *os.File
+	bf     *os.File
+	rf     *os.File
 	revs   [][]core.UXTO
 	blocks []core.Block // in-memory cache
-	enc    *gob.Encoder
 }
 
-func blkFileName(id int) string {
-	return fmt.Sprintf("%s/blk_%d.dat", BLK_BASE, id)
+func blkFileName(id uint32) string {
+	return fmt.Sprintf("%s/blk_%06d.dat", BLK_BASE, id)
 }
 
-func revFileName(id int) string {
-	return fmt.Sprintf("%s/rev_%d.dat", REV_BASE, id)
+func revFileName(id uint32) string {
+	return fmt.Sprintf("%s/rev_%06d.dat", REV_BASE, id)
 }
 
-func Open(id int) (*BlockFile, error) {
+func Open(id uint32) (*BlockFile, error) {
+	// open or create files
 	homeDir, err := os.UserHomeDir()
-	absFileName := fmt.Sprintf("%s/.gocoin/%s", homeDir, blkFileName(id))
-
-	f, err := os.OpenFile(absFileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
+	absBlkFileName := fmt.Sprintf("%s/.gocoin/%s", homeDir, blkFileName(id))
+	absRevFileName := fmt.Sprintf("%s/.gocoin/%s", homeDir, revFileName(id))
+	bf, err := os.OpenFile(absBlkFileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open file: %w", err)
+	}
+	rf, err := os.OpenFile(absRevFileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file: %w", err)
 	}
 
-	bf := &BlockFile{
-		f:      f,
-		blocks: []core.Block{},
-		enc:    gob.NewEncoder(f),
+	blockFile := &BlockFile{
+		bf:     bf,
+		rf:     rf,
+		blocks: make([]core.Block, 0),
+		revs:   make([][]core.UXTO, 0),
 	}
 
 	var buf [100_000]byte
 	var pos int64
-	var currentBlock core.Block
 
+	// Read blk files
 	for {
-		n, _ := f.ReadAt(buf[:], pos)
+		n, _ := bf.ReadAt(buf[:], pos)
 		if n == 0 { // no more reads
 			break
 		}
 
-		slices := bytes.Split(buf[:], DIV)
+		slices := bytes.Split(buf[:], DIV_BLOCK)
 
 		for i, slice := range slices {
 			if i != len(slices)-1 { // last slice may be incomplete
-				if err := gob.NewDecoder(bytes.NewReader(slice)).Decode(&currentBlock); err != nil {
-					return nil, fmt.Errorf("error decoding block: %w", err)
-				}
-
-				bf.blocks = append(bf.blocks, currentBlock)
+				blockFile.blocks = append(blockFile.blocks, *myBinary.DeserializeBlock(slice))
+				pos += int64(len(slice))
 			}
+
+			pos += 8 // separator
+		}
+	}
+
+	// Read rev file
+	buf = [100_000]byte{}
+	pos = 0
+
+	for {
+		n, _ := rf.ReadAt(buf[:], pos)
+		if n == 0 {
+			break
 		}
 
-		pos = pos + int64(n) - int64(len(slices[len(slices)-1]))
+		blockUXTOs := bytes.Split(buf[:], DIV_BLOCK) // UXTO for each block
+
+		for i, uxtos := range blockUXTOs {
+			if i != len(blockUXTOs)-1 { // discard the last one
+				count := len(uxtos) / S_UXTO
+				blockFile.revs = append(blockFile.revs, []core.UXTO{}) // initialize the slice
+				for j := 0; j < count; j++ {
+					blockFile.revs[i] = append(blockFile.revs[i], *myBinary.DeserializeUXTO(uxtos[S_UXTO*j : S_UXTO+S_UXTO*j]))
+					pos += S_UXTO
+				}
+				pos += 8 // separator
+			}
+		}
 	}
 
-	return bf, nil
+	return blockFile, nil
 }
 
-func (bf *BlockFile) WriteBlock(b *core.Block) error {
-	if len(bf.blocks) == N_BLK {
-		return fmt.Errorf("blocks reached max amount")
+func (blockFile *BlockFile) WriteBlock(b *core.Block, uxtos []*core.UXTO) error {
+	blockData := myBinary.SerializeBlock(b)
+	blockData = append(blockData, DIV_BLOCK...)
+
+	if _, err := blockFile.bf.Write(blockData); err != nil {
+		return fmt.Errorf("failed to write to block file: %w", err)
 	}
 
-	if err := bf.enc.Encode(*b); err != nil {
-		return err
+	var uxtoData []byte
+	for _, u := range uxtos {
+		uxtoData = append(uxtoData, myBinary.SerializeUXTO(u)...)
 	}
+	uxtoData = append(uxtoData, DIV_BLOCK...)
 
-	if _, err := bf.f.Write(DIV); err != nil {
-		return err
+	if _, err := blockFile.rf.Write(uxtoData); err != nil {
+		return fmt.Errorf("failed to write to rev file: %w", err)
 	}
 
 	return nil
 }
 
-func (bf *BlockFile) Close() error {
-	return bf.f.Close()
+func (blockFile *BlockFile) Close() error {
+	return blockFile.bf.Close()
 }

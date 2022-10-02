@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"github.com/davecgh/go-spew/spew"
 	"gocoin/internal/core"
 	"reflect"
 	"testing"
@@ -94,5 +95,28 @@ func TestDeserializeTxOut(t *testing.T) {
 
 	if !reflect.DeepEqual(txOut, txOutDes) {
 		t.Fatalf("Object not equal")
+	}
+}
+
+func TestDeserializeUXTO(t *testing.T) {
+	u := &core.UXTO{
+		TxId: core.RandomHash256(),
+		N:    11,
+		TxOut: &core.TxOut{
+			Value: 100000,
+			ScriptPubKey: core.ScriptPubKey{
+				PubKeyHash: core.RandomHash160(),
+			},
+		},
+	}
+
+	buf := SerializeUXTO(u)
+	uDes := DeserializeUXTO(buf)
+
+	t.Logf(spew.Sdump(u))
+	t.Logf(spew.Sdump(uDes))
+
+	if !reflect.DeepEqual(u, uDes) {
+		t.Fatalf("Objects not equal")
 	}
 }

@@ -6,6 +6,7 @@ import (
 )
 
 const MAGIC_TX uint32 = 0xefefefef
+const S_BLOCKHEADER = 77
 
 var TX_SEP []byte
 
