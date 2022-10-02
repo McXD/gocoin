@@ -43,10 +43,6 @@ func (header *BlockHeader) Hash() Hash256 {
 	return HashTo256(data)
 }
 
-func (header *BlockHeader) String() string {
-	return fmt.Sprintf("BlockHeader{Timestamp: %d, Bits: %d, Nonce: %d, HashPrevBlock: %s, HashMerkleRoot: %s}", header.Time, header.Bits, header.Nonce, header.HashPrevBlock, header.HashMerkleRoot)
-}
-
 type Block struct {
 	Hash   Hash256
 	Height uint32
@@ -57,7 +53,7 @@ type Block struct {
 func (block *Block) CalculateMerkleRoot() (Hash256, error) {
 	var leaves []merkletree.Content
 	for _, tx := range block.Transactions {
-		leaves = append(leaves, *tx)
+		leaves = append(leaves, tx)
 	}
 
 	if tree, err := merkletree.NewTree(leaves); err != nil {
@@ -152,10 +148,6 @@ func (block *Block) Verify(uSet *UXTOSet, currentBits uint8, timeWindow int64, b
 	}
 
 	return nil
-}
-
-func (block *Block) String() string {
-	return fmt.Sprintf("Block{Hash: %s, Header: %s, nTx: %d}", block.Hash, block.BlockHeader.String(), len(block.Transactions))
 }
 
 type BlockBuilder struct {

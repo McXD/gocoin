@@ -13,6 +13,10 @@ func (hash Hash256) String() string {
 	return fmt.Sprintf("%X", hash[:])
 }
 
+func EmptyHash256() Hash256 {
+	return [32]byte{}
+}
+
 func Hash256FromSlice(byteSlice []byte) Hash256 {
 	var arr [32]byte
 	copy(arr[:], byteSlice)
@@ -44,6 +48,13 @@ func HashTo160(data []byte) Hash160 {
 	copy(sum160[:], md.Sum(nil))
 
 	return sum160
+}
+
+func Hash160FromSlice(slice []byte) Hash160 {
+	var arr [20]byte
+	copy(arr[:], slice)
+
+	return arr
 }
 
 func (hash *Hash160) String() string {

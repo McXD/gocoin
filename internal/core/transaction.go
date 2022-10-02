@@ -46,10 +46,6 @@ func (txOut *TxOut) CanBeSpentBy(pk *rsa.PublicKey) bool {
 	return txOut.ScriptPubKey.IsGeneratedFrom(pk)
 }
 
-func (txOut *TxOut) Serialized() []byte {
-	return []byte{}
-}
-
 type UXTO struct {
 	TxId Hash256
 	N    uint32
@@ -273,12 +269,12 @@ func (tx *Transaction) IsCoinbaseTx() bool {
 }
 
 // CalculateHash is implements the interface function required by merkletree.Content
-func (tx Transaction) CalculateHash() ([]byte, error) {
+func (tx *Transaction) CalculateHash() ([]byte, error) {
 	hash := tx.Hash()
 	return hash[:], nil
 }
 
-func (tx Transaction) Equals(other merkletree.Content) (bool, error) {
+func (tx *Transaction) Equals(other merkletree.Content) (bool, error) {
 	otherHash, err := other.CalculateHash()
 	thisHash := tx.Hash()
 

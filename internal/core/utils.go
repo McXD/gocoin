@@ -28,6 +28,13 @@ func RandomHash256() Hash256 {
 	return HashTo256(buf[:])
 }
 
+func RandomHash160() Hash160 {
+	var buf [20]byte
+	rand.Reader.Read(buf[:])
+
+	return HashTo160(buf[:])
+}
+
 func Contains(s []uint32, e uint32) bool {
 	for _, a := range s {
 		if a == e {
