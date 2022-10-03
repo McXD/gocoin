@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestOpen(t *testing.T) {
+func TestAllBlockFile(t *testing.T) {
 	tmpPath := fmt.Sprintf("/tmp/blk_%x.index", core.RandomHash256().String())
 
 	repo, err := NewBlockIndexRepo(tmpPath)

@@ -1,10 +1,142 @@
 package persistence
 
-type BlockIndex struct {
+import (
+	"fmt"
+	"github.com/boltdb/bolt"
+	"gocoin/internal/core"
+	"gocoin/internal/persistence/binary"
+	"time"
+)
+
+type UXTORef struct {
+	TxId core.Hash256
+	N    uint32
 }
 
-type BlockFileInfo struct {
+func NewUXTORef(u *core.UXTO) UXTORef {
+	return UXTORef{
+		TxId: u.TxId,
+		N:    u.N,
+	}
 }
 
-type TransactionIndex struct {
+func (ur UXTORef) Serialize() []byte {
+	var buf []byte
+
+	buf = append(buf, ur.TxId[:]...)
+	buf = append(buf, binary.Uint32ToBytes(ur.N)...)
+
+	return buf
+}
+
+func (ur UXTORef) SetBytes(buf []byte) {
+	ur.TxId = core.Hash256FromSlice(buf[:32])
+	ur.N = binary.Uint32FromBytes(buf[32:36])
+}
+
+type ChainStateRepo struct {
+	db *bolt.DB
+}
+
+func NewChainStateRepo(dbPath string) (*ChainStateRepo, error) {
+	repo := &ChainStateRepo{db: nil}
+
+	db, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 10 * time.Second})
+	if err != nil {
+		return nil, fmt.Errorf("cannot open db: %w", err)
+	}
+
+	repo.db = db
+
+	// create two buckets
+	err = db.Update(func(tx *bolt.Tx) error {
+		if _, err := tx.CreateBucketIfNotExists([]byte("C")); err != nil {
+			return fmt.Errorf("cannot create 'C': %w", err)
+		} // txId:N -> UXTO
+		if _, err := tx.CreateBucketIfNotExists([]byte("B")); err != nil {
+			return fmt.Errorf("cannot create 'B': %w", err)
+		} // "B" -> Hash256 (Terminating Block)
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot create buckets: %w", err)
+	}
+
+	return repo, nil
+}
+
+func (repo *ChainStateRepo) PutUXTO(u *core.UXTO) error {
+	err := repo.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("C"))
+		err := b.Put(NewUXTORef(u).Serialize(), binary.SerializeUXTO(u))
+		return err
+	})
+
+	return err
+}
+
+func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) (*core.UXTO, error) {
+	uxto := &core.UXTO{
+		TxId:  core.Hash256{},
+		N:     0,
+		TxOut: nil,
+	}
+
+	err := repo.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("C"))
+		ret := b.Get(UXTORef{
+			TxId: txId,
+			N:    n,
+		}.Serialize())
+		if ret == nil {
+			return fmt.Errorf("record not found")
+		}
+		uxto = binary.DeserializeUXTO(ret)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return uxto, nil
+}
+
+func (repo *ChainStateRepo) RemoveUXTO(txId core.Hash256, n uint32) error {
+	err := repo.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("C"))
+		return b.Delete(UXTORef{
+			TxId: txId,
+			N:    n,
+		}.Serialize())
+	})
+
+	return err
+}
+
+func (repo *ChainStateRepo) GetCurrentBlockHash() (core.Hash256, error) {
+	h := core.Hash256{}
+
+	err := repo.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("B"))
+		ret := b.Get([]byte("B"))
+		if ret == nil {
+			return fmt.Errorf("record not found")
+		}
+		h = core.Hash256FromSlice(ret)
+		return nil
+	})
+
+	return h, err
+}
+
+func (repo *ChainStateRepo) SetCurrentBlockHash(hash core.Hash256) error {
+	err := repo.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("B"))
+		err := b.Put([]byte("B"), hash[:])
+		return err
+	})
+
+	return err
 }
