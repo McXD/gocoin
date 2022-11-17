@@ -3,8 +3,8 @@ package persistence
 import (
 	"fmt"
 	"github.com/boltdb/bolt"
-	"gocoin/internal/core"
-	"gocoin/internal/persistence/binary"
+	"gocoin/core"
+	"gocoin/marshal"
 	"os"
 	"time"
 )
@@ -17,19 +17,19 @@ type BlockIndexRecord struct {
 	Offset      uint32
 }
 
-func (b *BlockIndexRecord) Serialize() []byte {
+func (b *BlockIndexRecord) Marshall() []byte {
 	var buf []byte
 
-	buf = append(buf, binary.SerializeBlockHeader(&b.BlockHeader)...)
-	buf = append(buf, binary.Uint32ToBytes(b.Height)...)
-	buf = append(buf, binary.Uint32ToBytes(b.TxCount)...)
-	buf = append(buf, binary.Uint32ToBytes(b.BlockFileID)...)
-	buf = append(buf, binary.Uint32ToBytes(b.Offset)...)
+	buf = append(buf, marshal.BlockHeader(&b.BlockHeader)...)
+	buf = append(buf, marshal.Uint32ToBytes(b.Height)...)
+	buf = append(buf, marshal.Uint32ToBytes(b.TxCount)...)
+	buf = append(buf, marshal.Uint32ToBytes(b.BlockFileID)...)
+	buf = append(buf, marshal.Uint32ToBytes(b.Offset)...)
 
 	return buf
 }
 
-func DeserializeBlockIndexRecord(buf []byte) *BlockIndexRecord {
+func UBlockIndexRecord(buf []byte) *BlockIndexRecord {
 	record := &BlockIndexRecord{
 		BlockHeader: core.BlockHeader{},
 		Height:      0,
@@ -39,19 +39,19 @@ func DeserializeBlockIndexRecord(buf []byte) *BlockIndexRecord {
 	}
 
 	p := 0
-	record.BlockHeader = *binary.DeserializeBlockHeader(buf[:binary.S_BLOCKHEADER])
+	record.BlockHeader = *marshal.UBlockHeader(buf[:marshal.S_BLOCKHEADER])
 
-	p += binary.S_BLOCKHEADER
-	record.Height = binary.Uint32FromBytes(buf[p : p+4])
-
-	p += 4
-	record.TxCount = binary.Uint32FromBytes(buf[p : p+4])
+	p += marshal.S_BLOCKHEADER
+	record.Height = marshal.Uint32FromBytes(buf[p : p+4])
 
 	p += 4
-	record.BlockFileID = binary.Uint32FromBytes(buf[p : p+4])
+	record.TxCount = marshal.Uint32FromBytes(buf[p : p+4])
 
 	p += 4
-	record.Offset = binary.Uint32FromBytes(buf[p : p+4])
+	record.BlockFileID = marshal.Uint32FromBytes(buf[p : p+4])
+
+	p += 4
+	record.Offset = marshal.Uint32FromBytes(buf[p : p+4])
 
 	return record
 }
@@ -62,17 +62,17 @@ type FileInfoRecord struct {
 	UndoFileSize  uint32
 }
 
-func (r *FileInfoRecord) Serialize() []byte {
+func (r *FileInfoRecord) Marshall() []byte {
 	var buf []byte
 
-	buf = append(buf, binary.Uint32ToBytes(r.BlockCount)...)
-	buf = append(buf, binary.Uint32ToBytes(r.BlockFileSize)...)
-	buf = append(buf, binary.Uint32ToBytes(r.UndoFileSize)...)
+	buf = append(buf, marshal.Uint32ToBytes(r.BlockCount)...)
+	buf = append(buf, marshal.Uint32ToBytes(r.BlockFileSize)...)
+	buf = append(buf, marshal.Uint32ToBytes(r.UndoFileSize)...)
 
 	return buf
 }
 
-func DeserializeFileInfoRecord(buf []byte) *FileInfoRecord {
+func UFileInfoRecord(buf []byte) *FileInfoRecord {
 	record := &FileInfoRecord{
 		BlockCount:    0,
 		BlockFileSize: 0,
@@ -80,13 +80,13 @@ func DeserializeFileInfoRecord(buf []byte) *FileInfoRecord {
 	}
 
 	p := 0
-	record.BlockCount = binary.Uint32FromBytes(buf[p : p+4])
+	record.BlockCount = marshal.Uint32FromBytes(buf[p : p+4])
 
 	p += 4
-	record.BlockFileSize = binary.Uint32FromBytes(buf[p : p+4])
+	record.BlockFileSize = marshal.Uint32FromBytes(buf[p : p+4])
 
 	p += 4
-	record.UndoFileSize = binary.Uint32FromBytes(buf[p : p+4])
+	record.UndoFileSize = marshal.Uint32FromBytes(buf[p : p+4])
 
 	return record
 }
@@ -97,17 +97,17 @@ type TransactionRecord struct {
 	TxOffset    uint32
 }
 
-func (r *TransactionRecord) Serialize() []byte {
+func (r *TransactionRecord) Marshall() []byte {
 	var buf []byte
 
-	buf = append(buf, binary.Uint32ToBytes(r.BlockFileID)...)
-	buf = append(buf, binary.Uint32ToBytes(r.BlockOffset)...)
-	buf = append(buf, binary.Uint32ToBytes(r.TxOffset)...)
+	buf = append(buf, marshal.Uint32ToBytes(r.BlockFileID)...)
+	buf = append(buf, marshal.Uint32ToBytes(r.BlockOffset)...)
+	buf = append(buf, marshal.Uint32ToBytes(r.TxOffset)...)
 
 	return buf
 }
 
-func DeserializeTransactionRecord(buf []byte) *TransactionRecord {
+func UTransactionRecord(buf []byte) *TransactionRecord {
 	record := &TransactionRecord{
 		BlockFileID: 0,
 		BlockOffset: 0,
@@ -115,13 +115,13 @@ func DeserializeTransactionRecord(buf []byte) *TransactionRecord {
 	}
 
 	p := 0
-	record.BlockFileID = binary.Uint32FromBytes(buf[p : p+4])
+	record.BlockFileID = marshal.Uint32FromBytes(buf[p : p+4])
 
 	p += 4
-	record.BlockOffset = binary.Uint32FromBytes(buf[p : p+4])
+	record.BlockOffset = marshal.Uint32FromBytes(buf[p : p+4])
 
 	p += 4
-	record.TxOffset = binary.Uint32FromBytes(buf[p : p+4])
+	record.TxOffset = marshal.Uint32FromBytes(buf[p : p+4])
 
 	return record
 }
@@ -170,7 +170,7 @@ func NewBlockIndexRepo(rootDir string) (*BlockIndexRepo, error) {
 func (repo *BlockIndexRepo) PutTransactionRecord(txId core.Hash256, r *TransactionRecord) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("t"))
-		err := b.Put(txId[:], r.Serialize())
+		err := b.Put(txId[:], r.Marshall())
 		return err
 	})
 
@@ -186,7 +186,7 @@ func (repo *BlockIndexRepo) GetTransactionRecord(txId core.Hash256) (*Transactio
 		if ret == nil {
 			return fmt.Errorf("record not found")
 		}
-		tr = DeserializeTransactionRecord(ret)
+		tr = UTransactionRecord(ret)
 
 		return nil
 	})
@@ -201,7 +201,7 @@ func (repo *BlockIndexRepo) GetTransactionRecord(txId core.Hash256) (*Transactio
 func (repo *BlockIndexRepo) PutBlockIndexRecord(blkId core.Hash256, r *BlockIndexRecord) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("b"))
-		err := b.Put(blkId[:], r.Serialize())
+		err := b.Put(blkId[:], r.Marshall())
 		return err
 	})
 
@@ -215,9 +215,9 @@ func (repo *BlockIndexRepo) GetBlockIndexRecord(blkId core.Hash256) (*BlockIndex
 		b := tx.Bucket([]byte("b"))
 		ret := b.Get(blkId[:])
 		if ret == nil {
-			return fmt.Errorf("record not found")
+			return ErrNotFound
 		}
-		tr = DeserializeBlockIndexRecord(ret)
+		tr = UBlockIndexRecord(ret)
 
 		return nil
 	})
@@ -232,7 +232,7 @@ func (repo *BlockIndexRepo) GetBlockIndexRecord(blkId core.Hash256) (*BlockIndex
 func (repo *BlockIndexRepo) PutFileInfoRecord(fileId uint32, r *FileInfoRecord) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("f"))
-		err := b.Put(binary.Uint32ToBytes(fileId), r.Serialize())
+		err := b.Put(marshal.Uint32ToBytes(fileId), r.Marshall())
 		return err
 	})
 
@@ -244,11 +244,11 @@ func (repo *BlockIndexRepo) GetFileInfoRecord(fileId uint32) (*FileInfoRecord, e
 
 	err := repo.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("f"))
-		ret := b.Get(binary.Uint32ToBytes(fileId))
+		ret := b.Get(marshal.Uint32ToBytes(fileId))
 		if ret == nil {
 			return fmt.Errorf("record not found")
 		}
-		tr = DeserializeFileInfoRecord(ret)
+		tr = UFileInfoRecord(ret)
 
 		return nil
 	})
@@ -263,8 +263,8 @@ func (repo *BlockIndexRepo) GetFileInfoRecord(fileId uint32) (*FileInfoRecord, e
 func (repo *BlockIndexRepo) PutCurrentFileId(id uint32) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("l"))
-		if err := b.Put([]byte("l"), binary.Uint32ToBytes(id)); err != nil {
-			return fmt.Errorf("failed to put id: %w", err)
+		if err := b.Put([]byte("l"), marshal.Uint32ToBytes(id)); err != nil {
+			return fmt.Errorf("failed to put Id: %w", err)
 		}
 		return nil
 	})
@@ -275,9 +275,9 @@ func (repo *BlockIndexRepo) PutCurrentFileId(id uint32) error {
 func (repo *BlockIndexRepo) IncrementFileId() error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("l"))
-		id := binary.Uint32FromBytes(b.Get([]byte("l")))
-		if err := b.Put([]byte("l"), binary.Uint32ToBytes(id+1)); err != nil {
-			return fmt.Errorf("failed to put id: %w", err)
+		id := marshal.Uint32FromBytes(b.Get([]byte("l")))
+		if err := b.Put([]byte("l"), marshal.Uint32ToBytes(id+1)); err != nil {
+			return fmt.Errorf("failed to put Id: %w", err)
 		}
 		return nil
 	})
@@ -292,9 +292,9 @@ func (repo *BlockIndexRepo) GetCurrentFileId() (uint32, error) {
 		b := tx.Bucket([]byte("l"))
 		ret := b.Get([]byte("l"))
 		if ret == nil {
-			return fmt.Errorf("entry not found")
+			return ErrNotFound
 		}
-		id = binary.Uint32FromBytes(ret)
+		id = marshal.Uint32FromBytes(ret)
 		return nil
 	})
 

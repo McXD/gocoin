@@ -1,21 +1,21 @@
-package binary
+package marshal
 
 import (
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"github.com/davecgh/go-spew/spew"
-	"gocoin/internal/core"
+	core2 "gocoin/core"
 	"reflect"
 	"testing"
 )
 
 func TestDeserializeScriptSig(t *testing.T) {
 	sk, _ := rsa.GenerateKey(rand.Reader, 512)
-	digest := core.RandomHash256()
+	digest := core2.RandomHash256()
 	sig, _ := sk.Sign(rand.Reader, digest[:], crypto.SHA256)
 
-	ss := &core.ScriptSig{
+	ss := &core2.ScriptSig{
 		PK:        &sk.PublicKey,
 		Signature: sig,
 	}
@@ -34,16 +34,16 @@ func TestDeserializeScriptSig(t *testing.T) {
 
 func TestDeserializeTxIn(t *testing.T) {
 	sk, _ := rsa.GenerateKey(rand.Reader, 512)
-	digest := core.RandomHash256()
+	digest := core2.RandomHash256()
 	sig, _ := sk.Sign(rand.Reader, digest[:], crypto.SHA256)
 
-	ss := &core.ScriptSig{
+	ss := &core2.ScriptSig{
 		PK:        &sk.PublicKey,
 		Signature: sig,
 	}
 
-	txIn := &core.TxIn{
-		PrevTxId:  core.RandomHash256(),
+	txIn := &core2.TxIn{
+		PrevTxId:  core2.RandomHash256(),
 		N:         0,
 		ScriptSig: *ss,
 		Coinbase:  nil,
@@ -62,7 +62,7 @@ func TestDeserializeTxIn(t *testing.T) {
 
 	// --- coinbase input ---
 
-	txIn = &core.TxIn{
+	txIn = &core2.TxIn{
 		PrevTxId: [32]byte{},
 		N:        0,
 		Coinbase: []byte("coinbase!!!!!"),
@@ -80,10 +80,10 @@ func TestDeserializeTxIn(t *testing.T) {
 }
 
 func TestDeserializeTxOut(t *testing.T) {
-	txOut := &core.TxOut{
+	txOut := &core2.TxOut{
 		Value: 100000,
-		ScriptPubKey: core.ScriptPubKey{
-			PubKeyHash: core.RandomHash160(),
+		ScriptPubKey: core2.ScriptPubKey{
+			PubKeyHash: core2.RandomHash160(),
 		},
 	}
 
@@ -99,13 +99,13 @@ func TestDeserializeTxOut(t *testing.T) {
 }
 
 func TestDeserializeUXTO(t *testing.T) {
-	u := &core.UXTO{
-		TxId: core.RandomHash256(),
+	u := &core2.UXTO{
+		TxId: core2.RandomHash256(),
 		N:    11,
-		TxOut: &core.TxOut{
+		TxOut: &core2.TxOut{
 			Value: 100000,
-			ScriptPubKey: core.ScriptPubKey{
-				PubKeyHash: core.RandomHash160(),
+			ScriptPubKey: core2.ScriptPubKey{
+				PubKeyHash: core2.RandomHash160(),
 			},
 		},
 	}

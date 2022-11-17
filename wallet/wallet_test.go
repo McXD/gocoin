@@ -1,12 +1,12 @@
 package wallet
 
 import (
-	"gocoin/internal/core"
+	"gocoin/core"
 	"testing"
 )
 
 func TestWallet_ProcessTransaction(t *testing.T) {
-	var w = NewWallet()
+	var w = NewInMemWallet()
 
 	var wAddr1 = w.Addresses[0]
 	var wKey1 = w.Keys[wAddr1]
@@ -17,7 +17,7 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 
 	w.ProcessTransaction(coinbase)
 	if b1 := w.Balances[wAddr1]; b1 != 100 {
-		t.Fatalf("Balance of wAddr1 is %d; want %d", b1, 100)
+		t.Fatalf("GetBalance of wAddr1 is %d; want %d", b1, 100)
 	}
 
 	txb := core.NewTransactionBuilder()
@@ -27,23 +27,22 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 		TxOut: coinbase.Outs[0],
 	}, &wKey1.PublicKey)
 	txb.AddOutput(50, wAddr2)
-	txb.AddChange(0)
 
 	// pay 50 from wAddr1 to wAddr2
 	tx1 := txb.Sign(wKey1)
 	w.ProcessTransaction(tx1)
 
 	if b1 := w.Balances[wAddr1]; b1 != 50 {
-		t.Fatalf("Balance of wAddr1 is %d; want %d", b1, 50)
+		t.Fatalf("GetBalance of wAddr1 is %d; want %d", b1, 50)
 	}
 
 	if b2 := w.Balances[wAddr1]; b2 != 50 {
-		t.Fatalf("Balance of wAddr2 is %d; want %d", b2, 50)
+		t.Fatalf("GetBalance of wAddr2 is %d; want %d", b2, 50)
 	}
 }
 
 func TestWallet_CreateTransaction(t *testing.T) {
-	w := NewWallet()
+	w := NewInMemWallet()
 	w.NewAddress()
 	w.NewAddress()
 

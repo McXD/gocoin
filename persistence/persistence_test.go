@@ -3,28 +3,28 @@ package persistence
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"gocoin/internal/core"
+	core2 "gocoin/core"
 )
 
 var SK []*rsa.PrivateKey
 var PK []*rsa.PublicKey
-var ADDR []core.Hash160
+var ADDR []core2.Hash160
 
-var TXID []core.Hash256
-var USET *core.InMemUXTOSet
+var TXID []core2.Hash256
+var USET *core2.InMemUXTOSet
 
 func PopulateTestData() {
 	SK = []*rsa.PrivateKey{}
 	PK = []*rsa.PublicKey{}
-	ADDR = []core.Hash160{}
-	TXID = []core.Hash256{}
-	USET = core.NewUXTOSet()
+	ADDR = []core2.Hash160{}
+	TXID = []core2.Hash256{}
+	USET = core2.NewUXTOSet()
 
 	// 10 accounts
 	for i := 0; i < 10; i++ {
 		sk, _ := rsa.GenerateKey(rand.Reader, 512)
 		pk := &sk.PublicKey
-		addr := core.HashPubKey(pk)
+		addr := core2.HashPubKey(pk)
 
 		SK = append(SK, sk)
 		PK = append(PK, pk)
@@ -41,13 +41,13 @@ func PopulateTestData() {
 	}
 }
 
-func NewUXTO(to core.Hash160, v uint32) *core.UXTO {
-	return &core.UXTO{
-		TxId: core.RandomHash256(),
+func NewUXTO(to core2.Hash160, v uint32) *core2.UXTO {
+	return &core2.UXTO{
+		TxId: core2.RandomHash256(),
 		N:    0,
-		TxOut: &core.TxOut{
+		TxOut: &core2.TxOut{
 			Value:        v,
-			ScriptPubKey: core.ScriptPubKey{PubKeyHash: to},
+			ScriptPubKey: core2.ScriptPubKey{PubKeyHash: to},
 		},
 	}
 }

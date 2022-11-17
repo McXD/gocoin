@@ -2,7 +2,7 @@ package rpc
 
 import (
 	"github.com/gin-gonic/gin"
-	"gocoin/internal/rpc/controllers"
+	"gocoin/rpc/controllers"
 )
 
 func NewRouter() *gin.Engine {

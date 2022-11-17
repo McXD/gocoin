@@ -4,15 +4,21 @@ import (
 	"container/list"
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"gocoin/internal/core"
-	"gocoin/internal/persistence"
-	"gocoin/internal/persistence/binary"
-	"gocoin/internal/wallet"
+	"gocoin/core"
+	"gocoin/marshal"
+	"gocoin/persistence"
+	"gocoin/wallet"
+)
+
+const (
+	INITIAL_BITS = 15
+	BLOCK_REWARD = 1000
 )
 
 type Blockchain struct {
 	rootDir string
-	*wallet.Wallet
+	*wallet.DiskWallet
+	*persistence.BlockFile
 	*persistence.BlockIndexRepo
 	*persistence.ChainStateRepo
 	// transactions in mempool is gaurenteed be valid according to the current state, readily to be mined
@@ -28,8 +34,12 @@ func LoadBlockchainFrom(rootDir string) (*Blockchain, error) {
 }
 
 // NewBlockchain creates a new blockchain at path as root directory.
+// This method does _not_ overwrite existing blockchain state.
 func NewBlockchain(rootDir string) (*Blockchain, error) {
-	w := wallet.NewWallet()
+	w, err := wallet.NewDiskWallet(rootDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create or create wallet: %w", err)
+	}
 	bi, err := persistence.NewBlockIndexRepo(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create block index: %w", err)
@@ -38,10 +48,18 @@ func NewBlockchain(rootDir string) (*Blockchain, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot create chain state: %w", err)
 	}
+	bfId, err := bi.GetCurrentFileId()
+	if err == persistence.ErrNotFound {
+		bfId = 0
+	} else if err != nil {
+		return nil, fmt.Errorf("cannot get current block file id: %w", err)
+	}
+	bf, err := persistence.NewBlockFile(rootDir, bfId)
 
 	b := Blockchain{
 		rootDir:        rootDir,
-		Wallet:         w,
+		DiskWallet:     w,
+		BlockFile:      bf,
 		BlockIndexRepo: bi,
 		ChainStateRepo: cs,
 	}
@@ -50,32 +68,32 @@ func NewBlockchain(rootDir string) (*Blockchain, error) {
 }
 
 // Mine a block. Transaction selection is based on the following rules:
-// 1. The block is around 1 MB in size
+// 1. The block is max 1 MB in size
 // 2. The block must contain at least one coinbase transaction
 // 3. Transactions with higher fees are preferred
-func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward uint32) *core.Block {
-	currentBlockHash, err := bc.GetCurrentBlockHash()
-	if err == persistence.ErrNotFound { // not found is likely to be the first block
+func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward uint32) (*core.Block, error) {
+	currentBlockHash, err := bc.ChainStateRepo.GetCurrentBlockHash()
+	if err == persistence.ErrNotFound { // first block
 		currentBlockHash = core.EmptyHash256()
 	} else if err != nil {
-		panic(fmt.Errorf("failed to get current block hash: %w", err))
+		return nil, fmt.Errorf("failed to get current block hash: %w", err)
 	}
 
-	currentBlock, err := bc.GetBlockIndexRecord(currentBlockHash)
-	if err != nil && currentBlockHash != core.EmptyHash256() {
-		panic(fmt.Errorf("failed to get block %x: %w", currentBlockHash[:], err))
-	} else {
-		currentBlock = &persistence.BlockIndexRecord{
+	currentBlockIndex, err := bc.GetBlockIndexRecord(currentBlockHash)
+	if err == persistence.ErrNotFound && currentBlockHash != core.EmptyHash256() { // not the first block
+		return nil, fmt.Errorf("failed to get block %x: %w", currentBlockHash[:], err)
+	} else { // first block
+		currentBlockIndex = &persistence.BlockIndexRecord{
 			BlockHeader: core.BlockHeader{
-				Bits: 20, // TODO: initial difficulty
+				Bits: INITIAL_BITS, // TODO: initial difficulty
 			},
-			Height: 4294967295, // overflow it to 0
+			Height: 4294967295, // -1
 		}
 	}
 
 	bb := core.NewBlockBuilder()
-	bb.BaseOn(currentBlockHash, currentBlock.Height)
-	bb.SetBits(currentBlock.Bits) // TODO: adjust difficulty
+	bb.BaseOn(currentBlockHash, currentBlockIndex.Height)
+	bb.SetBits(currentBlockIndex.Bits) // TODO: adjust difficulty
 
 	// transaction selection
 	var txFee uint32
@@ -85,9 +103,9 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 		tx := e.Value.(*core.Transaction)
 		txs = append(txs, tx)
 		txFee += tx.CalculateFee(bc.ChainStateRepo)
-		blkSize += len(binary.SerializeTransaction(tx))
+		blkSize += len(marshal.Transaction(tx))
 
-		if blkSize > 1024*1024 { // 1 MB
+		if blkSize > 10*1024 { // size of a single block is less 10 KB
 			break
 		}
 	}
@@ -103,7 +121,7 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 	b := bb.Build()
 	log.Infof("Mined a block: %s", b.Hash)
 
-	return b
+	return b, nil
 }
 
 // ReceiveTransaction adds a transaction to the mempool according to the following rules:
@@ -112,7 +130,6 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 // 3. Transactions in the pool are sorted by fee
 func (bc *Blockchain) ReceiveTransaction(tx *core.Transaction) error {
 	// TODO: can wrap the transaction to include more data, such as the fee, to be more efficient
-
 	if err := tx.Verify(bc.ChainStateRepo); err != nil {
 		return fmt.Errorf("failed to verify transaction: %w", err)
 	}
@@ -138,27 +155,28 @@ func (bc *Blockchain) ReceiveTransaction(tx *core.Transaction) error {
 
 // AddBlock to the active tip. The block must be valid according to the current state.
 func (bc *Blockchain) AddBlock(block *core.Block) error {
-	prevBlock, err := bc.GetBlockIndexRecord(block.HashPrevBlock)
-	if err != nil && block.HashPrevBlock != core.EmptyHash256() { // skip genesis block
-		return fmt.Errorf("failed to get previous block %s: %w", prevBlock.Hash(), err)
-	} else {
-		prevBlock = &persistence.BlockIndexRecord{
-			BlockHeader: core.BlockHeader{
-				Bits: 20, // TODO: initial difficulty
-			},
-			Height: 4294967295, // overflow it to 0
+	prevBlockIndex, err := bc.GetBlockIndexRecord(block.HashPrevBlock)
+	if err == persistence.ErrNotFound {
+		if block.HashPrevBlock != core.EmptyHash256() {
+			return fmt.Errorf("failed to get previous block %s: %w", prevBlockIndex.Hash(), err)
+		} else { // genesis block
+			prevBlockIndex = &persistence.BlockIndexRecord{
+				BlockHeader: core.BlockHeader{
+					Bits: INITIAL_BITS, // TODO: initial difficulty
+				},
+				Height: 4294967295, // overflow it to 0
+			}
 		}
-
-		if err := bc.PutCurrentFileId(0); err != nil { // initialize
-			return fmt.Errorf("failed to put current file id: %w", err)
-		}
+	} else if err != nil {
+		return fmt.Errorf("failed to get previous block %s: %w", prevBlockIndex.Hash(), err)
 	}
 
 	var spent []*core.UXTO
-	if err := block.Verify(bc.ChainStateRepo, prevBlock.Bits, 500, 1000); err != nil { //TODO: reward parameter
+	if err := block.Verify(bc.ChainStateRepo, prevBlockIndex.Bits, 500, BLOCK_REWARD); err != nil {
 		return fmt.Errorf("failed to verify block: %w", err)
 	}
 
+	// update chain state
 	for _, tx := range block.Transactions {
 		// process spent UXTOs
 		for _, input := range tx.Ins {
@@ -187,7 +205,7 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 			}
 		}
 
-		// clear the mempool (TODO: INEFFICIENT)
+		// clean the mempool (TODO: INEFFICIENT)
 		for e := bc.mempool.Front(); e != nil; e = e.Next() {
 			if e.Value.(*core.Transaction).Hash() == tx.Hash() {
 				bc.mempool.Remove(e)
@@ -195,38 +213,59 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 		}
 	}
 
-	// save block and rev
-	fileId, err := bc.BlockIndexRepo.GetCurrentFileId()
-	if err != nil {
-		return fmt.Errorf("failed to get current block file id: %w", err)
-	}
+	// open a new one if the current block file when full
+	if bc.BlockFile.GetBlockFileSize() > 10*1024 { // 10 KB (TODO: parameter)
+		if err := bc.BlockFile.Close(); err != nil {
+			return fmt.Errorf("failed to close block file %d: %w", bc.BlockFile.Id, err)
+		}
 
-	blockFile, err := persistence.OpenBlockFile(bc.rootDir, fileId)
-	if err != nil {
-		return fmt.Errorf("failed to open block file %d: %w", fileId, err)
-	}
-	if blockFile.Size() > 200*1024*1024 { // 200MB (TODO: parameter)
-		blockFile, err = persistence.OpenBlockFile(bc.rootDir, fileId+1)
-		if err != nil {
-			return fmt.Errorf("failed to open block file %d: %w", fileId+1, err)
+		if bc.BlockFile, err = persistence.NewBlockFile(bc.rootDir, bc.BlockFile.Id+1); err != nil {
+			return fmt.Errorf("failed to open block file %d: %w", bc.BlockFile.Id+1, err)
+		}
+
+		if err := bc.BlockIndexRepo.PutCurrentFileId(bc.BlockFile.Id); err != nil {
+			return fmt.Errorf("failed to update current block file id: %w", err)
 		}
 	}
 
-	err = blockFile.WriteBlock(block, spent)
+	// save block and rev
+	err = bc.BlockFile.WriteBlock(block, spent)
 	if err != nil {
-		return fmt.Errorf("failed to write block %x to file %d: %w", block.Hash, fileId, err)
+		return fmt.Errorf("failed to write block %x to file %d: %w", block.Hash, bc.BlockFile.Id, err)
 	}
 
-	// save block index
+	// index the block
 	err = bc.BlockIndexRepo.PutBlockIndexRecord(block.Hash, &persistence.BlockIndexRecord{
 		BlockHeader: block.BlockHeader,
-		Height:      prevBlock.Height + 1,
+		Height:      prevBlockIndex.Height + 1,
 		TxCount:     uint32(len(block.Transactions)),
-		BlockFileID: fileId + 1,
-		Offset:      uint32(blockFile.GetBlockSize() - 1),
+		BlockFileID: bc.BlockFile.Id,
+		Offset:      uint32(bc.BlockFile.GetBlockCount() - 1),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to save block index record: %w", err)
+	}
+
+	// index the transactions
+	for i, tx := range block.Transactions {
+		err = bc.BlockIndexRepo.PutTransactionRecord(tx.Hash(), &persistence.TransactionRecord{
+			BlockFileID: bc.BlockFile.Id,
+			BlockOffset: uint32(bc.BlockFile.GetBlockCount() - 1),
+			TxOffset:    uint32(i),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to save transaction index record: %w", err)
+		}
+	}
+
+	// update block file info
+	err = bc.BlockIndexRepo.PutFileInfoRecord(bc.BlockFile.Id, &persistence.FileInfoRecord{
+		BlockCount:    uint32(bc.BlockFile.GetBlockCount()),
+		BlockFileSize: uint32(bc.BlockFile.GetBlockFileSize()),
+		UndoFileSize:  uint32(bc.BlockFile.GetUndoFileSize()),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to save file info record: %w", err)
 	}
 
 	// update tip block
@@ -235,9 +274,6 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 	}
 
 	log.Infof("Blockchain tip changes to: %s", block.Hash)
-
-	blockFile.Close()
-
 	return nil
 }
 

@@ -1,23 +1,23 @@
-package binary
+package marshal
 
 import (
 	"github.com/davecgh/go-spew/spew"
-	"gocoin/internal/core"
+	core2 "gocoin/core"
 	"reflect"
 	"testing"
 	"time"
 )
 
 func TestDeserializeBlockHeader(t *testing.T) {
-	bh := &core.BlockHeader{
+	bh := &core2.BlockHeader{
 		Time:           time.Now().Unix(),
 		Bits:           20,
 		Nonce:          123144,
-		HashPrevBlock:  core.RandomHash256(),
-		HashMerkleRoot: core.RandomHash256(),
+		HashPrevBlock:  core2.RandomHash256(),
+		HashMerkleRoot: core2.RandomHash256(),
 	}
 
-	buf := SerializeBlockHeader(bh)
+	buf := BlockHeader(bh)
 	bhDes := DeserializeBlockHeader(buf)
 
 	t.Log(spew.Sdump(bh))
@@ -31,31 +31,31 @@ func TestDeserializeBlockHeader(t *testing.T) {
 func TestDeserializeBlock(t *testing.T) {
 	PopulateTestData()
 
-	tx1 := core.NewCoinBaseTransaction([]byte("COINBASE"), core.RandomHash160(), 1000, 100)
-	tx2 := core.NewTransactionBuilder().
+	tx1 := core2.NewCoinBaseTransaction([]byte("COINBASE"), core2.RandomHash160(), 1000, 100)
+	tx2 := core2.NewTransactionBuilder().
 		AddInputFrom(USET.First(TXID[1]), PK[0]).
 		AddInputFrom(USET.First(TXID[0]), PK[0]).
 		AddOutput(100, ADDR[2]).
 		AddChange(50).
 		Sign(SK[0])
-	tx3 := core.NewTransactionBuilder().
+	tx3 := core2.NewTransactionBuilder().
 		AddInputFrom(USET.First(TXID[2]), PK[1]).
 		AddInputFrom(USET.First(TXID[3]), PK[1]).
 		AddOutput(100, ADDR[5]).
 		AddChange(50).
 		Sign(SK[0])
-	b := core.NewBlockBuilder().
-		BaseOn(core.EmptyHash256(), 1000).
+	b := core2.NewBlockBuilder().
+		BaseOn(core2.EmptyHash256(), 1000).
 		SetBits(20).
 		AddTransaction(tx1).
 		AddTransaction(tx2).
 		AddTransaction(tx3).
 		Build()
 
-	buf := SerializeBlock(b)
-	bDes := DeserializeBlock(buf)
+	buf := Block(b)
+	bDes := UBlock(buf)
 
-	// not read from binary
+	// not read from serialize
 	bDes.Height = b.Height
 	bDes.Hash = b.Hash
 

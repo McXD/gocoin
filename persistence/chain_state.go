@@ -4,14 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"github.com/boltdb/bolt"
-	"gocoin/internal/core"
-	"gocoin/internal/persistence/binary"
+	"gocoin/core"
+	"gocoin/marshal"
 	"os"
 	"time"
 )
 
 var ErrNotFound = errors.New("record not found")
 
+// UXTORef is a reference to a UXTO. This is singled out because we need to use this as a key in the map.
 type UXTORef struct {
 	TxId core.Hash256
 	N    uint32
@@ -28,14 +29,14 @@ func (ur UXTORef) Serialize() []byte {
 	var buf []byte
 
 	buf = append(buf, ur.TxId[:]...)
-	buf = append(buf, binary.Uint32ToBytes(ur.N)...)
+	buf = append(buf, marshal.Uint32ToBytes(ur.N)...)
 
 	return buf
 }
 
 func (ur UXTORef) SetBytes(buf []byte) {
 	ur.TxId = core.Hash256FromSlice(buf[:32])
-	ur.N = binary.Uint32FromBytes(buf[32:36])
+	ur.N = marshal.Uint32FromBytes(buf[32:36])
 }
 
 type ChainStateRepo struct {
@@ -77,7 +78,7 @@ func NewChainStateRepo(rootDir string) (*ChainStateRepo, error) {
 func (repo *ChainStateRepo) PutUXTO(u *core.UXTO) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("C"))
-		err := b.Put(NewUXTORef(u).Serialize(), binary.SerializeUXTO(u))
+		err := b.Put(NewUXTORef(u).Serialize(), marshal.SerializeUXTO(u))
 		return err
 	})
 
@@ -100,7 +101,7 @@ func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) *core.UXTO {
 		if ret == nil {
 			return ErrNotFound
 		}
-		uxto = binary.DeserializeUXTO(ret)
+		uxto = marshal.DeserializeUXTO(ret)
 		return nil
 	})
 

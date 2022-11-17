@@ -1,8 +1,8 @@
-package binary
+package marshal
 
 import (
 	"bytes"
-	"gocoin/internal/core"
+	"gocoin/core"
 )
 
 const MAGIC_TX uint32 = 0xefefefef
@@ -14,7 +14,7 @@ func init() {
 	TX_SEP = Uint32ToBytes(MAGIC_TX)
 }
 
-func SerializeBlockHeader(bh *core.BlockHeader) []byte {
+func BlockHeader(bh *core.BlockHeader) []byte {
 	var buf []byte
 
 	buf = append(buf, bh.HashPrevBlock[:]...)      // PrevBlockHash, 32
@@ -26,7 +26,7 @@ func SerializeBlockHeader(bh *core.BlockHeader) []byte {
 	return buf
 }
 
-func DeserializeBlockHeader(buf []byte) *core.BlockHeader {
+func UBlockHeader(buf []byte) *core.BlockHeader {
 	bh := &core.BlockHeader{
 		Time:           0,
 		Bits:           0,
@@ -53,14 +53,14 @@ func DeserializeBlockHeader(buf []byte) *core.BlockHeader {
 	return bh
 }
 
-func SerializeBlock(block *core.Block) []byte {
+func Block(block *core.Block) []byte {
 	var buf []byte
 
-	buf = append(buf, SerializeBlockHeader(&block.BlockHeader)...) // Header, 77
-	buf = append(buf, IntToBytes(len(block.Transactions))...)      // Tx Size, 8
+	buf = append(buf, BlockHeader(&block.BlockHeader)...)     // Header, 77
+	buf = append(buf, IntToBytes(len(block.Transactions))...) // Tx GetBlockFileSize, 8
 
 	for _, tx := range block.Transactions {
-		txSlice := SerializeTransaction(tx)
+		txSlice := Transaction(tx)
 		buf = append(buf, txSlice...) // Tx, variable
 		buf = append(buf, TX_SEP...)  // Separator, 4
 	}
@@ -68,7 +68,7 @@ func SerializeBlock(block *core.Block) []byte {
 	return buf
 }
 
-func DeserializeBlock(buf []byte) *core.Block {
+func UBlock(buf []byte) *core.Block {
 	block := &core.Block{
 		Hash:   core.Hash256{},
 		Height: 0,
@@ -83,7 +83,7 @@ func DeserializeBlock(buf []byte) *core.Block {
 	}
 
 	p := 0
-	block.BlockHeader = *DeserializeBlockHeader(buf[:77])
+	block.BlockHeader = *UBlockHeader(buf[:77])
 
 	p += 77
 	txCount := IntFromBytes(buf[p : p+8])
@@ -91,7 +91,7 @@ func DeserializeBlock(buf []byte) *core.Block {
 	p += 8
 	txs := bytes.Split(buf[p:], TX_SEP)
 	for i := 0; i < txCount; i++ {
-		block.Transactions = append(block.Transactions, DeserializeTransaction(txs[i]))
+		block.Transactions = append(block.Transactions, UTransaction(txs[i]))
 	}
 
 	return block

@@ -1,8 +1,8 @@
-package binary
+package marshal
 
 import (
 	"crypto/rsa"
-	"gocoin/internal/core"
+	"gocoin/core"
 	"math/big"
 )
 
@@ -12,7 +12,7 @@ func SerializeScriptSig(ss *core.ScriptSig) []byte {
 	pknB := ss.PK.N.Bytes()
 	pknSizeB := IntToBytes(len(pknB))
 
-	buf = append(buf, pknSizeB...)            // PK.N Size, 8
+	buf = append(buf, pknSizeB...)            // PK.N GetBlockFileSize, 8
 	buf = append(buf, ss.PK.N.Bytes()...)     // PK.N, variable
 	buf = append(buf, IntToBytes(ss.PK.E)...) // PK.E, 8
 	buf = append(buf, ss.Signature...)        // Signature, variable
@@ -54,7 +54,7 @@ func SerializeTxIn(txIn *core.TxIn) []byte {
 
 	data = append(data, txIn.PrevTxId[:]...)      // TxId, 32
 	data = append(data, Uint32ToBytes(txIn.N)...) // vOut, 4
-	data = append(data, sizeScriptSig...)         // ScriptSig Size, 8
+	data = append(data, sizeScriptSig...)         // ScriptSig GetBlockFileSize, 8
 	data = append(data, dataScriptSig...)         // ScriptSig, variable
 
 	return data

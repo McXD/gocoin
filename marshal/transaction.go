@@ -1,8 +1,8 @@
-package binary
+package marshal
 
 import (
 	"bytes"
-	"gocoin/internal/core"
+	"gocoin/core"
 )
 
 const (
@@ -15,20 +15,20 @@ func init() {
 	SEP = Uint32ToBytes(MAGIC_TXIN)
 }
 
-func SerializeTransaction(tx *core.Transaction) []byte {
+func Transaction(tx *core.Transaction) []byte {
 	var buf []byte
 
 	inputSize := IntToBytes(len(tx.Ins))
 	outPutSize := IntToBytes(len(tx.Outs))
 
-	buf = append(buf, inputSize...) // Input Size, 8
+	buf = append(buf, inputSize...) // Input GetBlockFileSize, 8
 
 	for _, txIn := range tx.Ins {
 		buf = append(buf, SerializeTxIn(txIn)...) // TxIn, variable
 		buf = append(buf, SEP...)                 // Separator, 4
 	}
 
-	buf = append(buf, outPutSize...) // Output Size, 8
+	buf = append(buf, outPutSize...) // Output GetBlockFileSize, 8
 
 	for _, txOut := range tx.Outs {
 		buf = append(buf, SerializeTxOut(txOut)...) // TxOut, 24
@@ -37,7 +37,7 @@ func SerializeTransaction(tx *core.Transaction) []byte {
 	return buf
 }
 
-func DeserializeTransaction(buf []byte) *core.Transaction {
+func UTransaction(buf []byte) *core.Transaction {
 	tx := &core.Transaction{
 		Ins:  []*core.TxIn{},
 		Outs: []*core.TxOut{},

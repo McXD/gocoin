@@ -2,7 +2,7 @@ package persistence
 
 import (
 	"fmt"
-	"gocoin/internal/core"
+	"gocoin/core"
 	"os"
 	"reflect"
 	"testing"

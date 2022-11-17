@@ -1,4 +1,4 @@
-package binary
+package marshal
 
 import "encoding/binary"
 

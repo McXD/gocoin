@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"gocoin/internal/blockchain"
+	"gocoin/blockchain"
 	"os"
+	"runtime/debug"
 )
 
 func greeting() {
@@ -32,18 +33,46 @@ func init() {
 // run a gocoin node
 func main() {
 	greeting()
+	cleanup()
+	initDirs()
 
-	blockchain, err := blockchain.NewBlockchain("/tmp/gocoin")
-	if err != nil {
-		panic(err)
-	}
+	bc, err := blockchain.NewBlockchain("/tmp/gocoin")
+	mainAddress, err := bc.DiskWallet.NewAddress()
 
 	for {
-		b := blockchain.Mine([]byte("coinbase"), blockchain.Addresses[0], 1000)
-		err := blockchain.AddBlock(b)
+		b, _ := bc.Mine([]byte("coinbase"), mainAddress, blockchain.BLOCK_REWARD)
+
+		err = bc.AddBlock(b)
+
 		if err != nil {
+			debug.PrintStack()
 			panic(err)
 		}
-		blockchain.Wallet.ProcessBlock(b)
+
+		err = bc.DiskWallet.ProcessBlock(b)
+
+		if err != nil {
+			debug.PrintStack()
+			panic(err)
+		}
+	}
+}
+
+func initDirs() {
+	err := os.Mkdir("/tmp/gocoin", 0777)
+	err = os.Mkdir("/tmp/gocoin/data", 0777)
+	err = os.Mkdir("/tmp/gocoin/db", 0777)
+
+	if err != nil {
+		debug.PrintStack()
+		panic(err)
+	}
+}
+
+func cleanup() {
+	err := os.RemoveAll("/tmp/gocoin")
+	if err != nil {
+		debug.PrintStack()
+		panic(err)
 	}
 }

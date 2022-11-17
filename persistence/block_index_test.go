@@ -2,7 +2,7 @@ package persistence
 
 import (
 	"fmt"
-	"gocoin/internal/core"
+	core2 "gocoin/core"
 	"os"
 	"reflect"
 	"testing"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestAllBlockFile(t *testing.T) {
-	tmpPath := fmt.Sprintf("/tmp/blk_%x.index", core.RandomHash256().String())
+	tmpPath := fmt.Sprintf("/tmp/blk_%x.index", core2.RandomHash256().String())
 
 	repo, err := NewBlockIndexRepo(tmpPath)
 	if err != nil {
@@ -18,21 +18,21 @@ func TestAllBlockFile(t *testing.T) {
 	}
 	defer os.Remove(tmpPath)
 
-	txId := core.RandomHash256()
+	txId := core2.RandomHash256()
 	txRec := &TransactionRecord{
 		BlockFileID: 123,
 		BlockOffset: 12,
 		TxOffset:    2,
 	}
 
-	blkId := core.RandomHash256()
+	blkId := core2.RandomHash256()
 	blkRec := &BlockIndexRecord{
-		BlockHeader: core.BlockHeader{
+		BlockHeader: core2.BlockHeader{
 			Time:           time.Now().Unix(),
 			Bits:           20,
 			Nonce:          1231414,
-			HashPrevBlock:  core.RandomHash256(),
-			HashMerkleRoot: core.RandomHash256(),
+			HashPrevBlock:  core2.RandomHash256(),
+			HashMerkleRoot: core2.RandomHash256(),
 		},
 		Height:      123,
 		TxCount:     12,
@@ -95,7 +95,7 @@ func TestAllBlockFile(t *testing.T) {
 	// File Id
 
 	if err := repo.PutCurrentFileId(fileId); err != nil {
-		t.Errorf("cannot put file id: %s", err)
+		t.Errorf("cannot put file Id: %s", err)
 	}
 
 	if gotFileId, _ := repo.GetCurrentFileId(); gotFileId != fileId {
@@ -104,6 +104,6 @@ func TestAllBlockFile(t *testing.T) {
 
 	_ = repo.IncrementFileId()
 	if gotFileId, _ := repo.GetCurrentFileId(); gotFileId != fileId+1 {
-		t.Errorf("failed to increment file id: got %d", gotFileId)
+		t.Errorf("failed to increment file Id: got %d", gotFileId)
 	}
 }
