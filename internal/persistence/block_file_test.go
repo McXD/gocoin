@@ -9,7 +9,7 @@ import (
 func TestOpenAndWriteBlockFile(t *testing.T) {
 	PopulateTestData()
 
-	bf, err := Open(0)
+	bf, err := OpenBlockFile(0)
 	if err != nil {
 		t.Fatalf("canont open Blockfile: %s", err)
 	}
@@ -47,7 +47,7 @@ func TestOpenAndWriteBlockFile(t *testing.T) {
 
 	_ = bf.Close()
 
-	bf, err = Open(0)
+	bf, err = OpenBlockFile(0)
 	if err != nil {
 		t.Fatalf("canont re-open Blockfile: %s", err)
 	}

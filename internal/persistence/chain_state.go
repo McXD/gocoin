@@ -1,12 +1,16 @@
 package persistence
 
 import (
+	"errors"
 	"fmt"
 	"github.com/boltdb/bolt"
 	"gocoin/internal/core"
 	"gocoin/internal/persistence/binary"
+	"os"
 	"time"
 )
+
+var ErrNotFound = errors.New("record not found")
 
 type UXTORef struct {
 	TxId core.Hash256
@@ -38,10 +42,14 @@ type ChainStateRepo struct {
 	db *bolt.DB
 }
 
-func NewChainStateRepo(dbPath string) (*ChainStateRepo, error) {
+func NewChainStateRepo(rootDir string) (*ChainStateRepo, error) {
 	repo := &ChainStateRepo{db: nil}
 
-	db, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 10 * time.Second})
+	if err := os.Mkdir(rootDir+"/db", os.ModePerm); !os.IsExist(err) {
+		return nil, fmt.Errorf("cannot create db directory: %v", err)
+	}
+
+	db, err := bolt.Open(rootDir+"/db/chain_state.dat", 0600, &bolt.Options{Timeout: 10 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("cannot open db: %w", err)
 	}
@@ -76,7 +84,7 @@ func (repo *ChainStateRepo) PutUXTO(u *core.UXTO) error {
 	return err
 }
 
-func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) (*core.UXTO, error) {
+func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) *core.UXTO {
 	uxto := &core.UXTO{
 		TxId:  core.Hash256{},
 		N:     0,
@@ -90,17 +98,17 @@ func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) (*core.UXTO, er
 			N:    n,
 		}.Serialize())
 		if ret == nil {
-			return fmt.Errorf("record not found")
+			return ErrNotFound
 		}
 		uxto = binary.DeserializeUXTO(ret)
 		return nil
 	})
 
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
-	return uxto, nil
+	return uxto
 }
 
 func (repo *ChainStateRepo) RemoveUXTO(txId core.Hash256, n uint32) error {
@@ -122,7 +130,7 @@ func (repo *ChainStateRepo) GetCurrentBlockHash() (core.Hash256, error) {
 		b := tx.Bucket([]byte("B"))
 		ret := b.Get([]byte("B"))
 		if ret == nil {
-			return fmt.Errorf("record not found")
+			return ErrNotFound
 		}
 		h = core.Hash256FromSlice(ret)
 		return nil

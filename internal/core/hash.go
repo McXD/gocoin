@@ -24,6 +24,7 @@ func Hash256FromSlice(byteSlice []byte) Hash256 {
 	return arr
 }
 
+// Int returns the integer value of this hash bits.
 func (hash Hash256) Int() *big.Int {
 	return big.NewInt(0).SetBytes(hash[:])
 }

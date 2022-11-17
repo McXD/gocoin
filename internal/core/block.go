@@ -73,7 +73,7 @@ func (block *Block) ContainsTransaction(txId Hash256) bool {
 	return false
 }
 
-func (block *Block) CalculateFee(uSet *UXTOSet) (fee uint32, overflow bool) {
+func (block *Block) CalculateFee(uSet UXTOSet) (fee uint32, overflow bool) {
 	var inValue, outValue uint32
 
 	for _, tx := range block.Transactions {
@@ -82,7 +82,7 @@ func (block *Block) CalculateFee(uSet *UXTOSet) (fee uint32, overflow bool) {
 			outValue += tmp
 
 			for _, txIn := range tx.Ins {
-				inValue += uSet.Get(txIn.PrevTxId, txIn.N).Value
+				inValue += uSet.GetUXTO(txIn.PrevTxId, txIn.N).Value
 			}
 		}
 	}
@@ -93,7 +93,7 @@ func (block *Block) CalculateFee(uSet *UXTOSet) (fee uint32, overflow bool) {
 	return fee, overflow
 }
 
-func (block *Block) Verify(uSet *UXTOSet, currentBits uint8, timeWindow int64, blockReward uint32) error {
+func (block *Block) Verify(uSet UXTOSet, currentBits uint8, timeWindow int64, blockReward uint32) error {
 	// verify header
 	if math.Abs(float64(time.Now().Unix()-block.Time)) > float64(timeWindow) {
 		return fmt.Errorf("invalid timestamp")
@@ -165,9 +165,9 @@ func NewBlockBuilder() *BlockBuilder {
 	}
 }
 
-func (bb *BlockBuilder) BaseOn(prevBlockHash Hash256, prevBlockHeight int32) *BlockBuilder {
+func (bb *BlockBuilder) BaseOn(prevBlockHash Hash256, prevBlockHeight uint32) *BlockBuilder {
 	bb.HashPrevBlock = prevBlockHash
-	bb.Height = uint32(prevBlockHeight + 1)
+	bb.Height = prevBlockHeight + 1
 	return bb
 }
 

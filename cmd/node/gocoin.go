@@ -3,8 +3,7 @@ package main
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
-	"gocoin/internal/core"
-	"gocoin/internal/wallet"
+	"gocoin/internal/blockchain"
 	"os"
 )
 
@@ -34,23 +33,17 @@ func init() {
 func main() {
 	greeting()
 
-	w := wallet.NewWallet()
-	log.WithFields(log.Fields{
-		"address": fmt.Sprintf("%X", w.Addresses[0]),
-	}).Info("Created primary wallet with address.")
-
-	bc := core.NewBlockchain(w.Addresses[0], 23, 1_000_000_000)
-	log.WithFields(log.Fields{
-		"genesisId":  bc.Head.Hash,
-		"difficulty": bc.Head.Bits,
-		"reward":     bc.Head.Reward,
-	}).Info("Created blockchain")
+	blockchain, err := blockchain.NewBlockchain("/tmp/gocoin")
+	if err != nil {
+		panic(err)
+	}
 
 	for {
-		b := bc.Mine(w.Addresses[0])
-		if err := bc.AddBlock(b); err != nil {
-			log.Warn("error adding block: %s", err)
+		b := blockchain.Mine([]byte("coinbase"), blockchain.Addresses[0], 1000)
+		err := blockchain.AddBlock(b)
+		if err != nil {
+			panic(err)
 		}
-		w.ProcessBlock(b)
+		blockchain.Wallet.ProcessBlock(b)
 	}
 }

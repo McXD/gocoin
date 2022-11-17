@@ -11,13 +11,11 @@ import (
 type Wallet struct {
 	Addresses []core.Hash160
 	Keys      map[core.Hash160]*rsa.PrivateKey
-	Balances  map[core.Hash160]uint32
+	Balances  map[core.Hash160]uint32     // cache
 	uxtos     map[core.Hash256]*core.UXTO // addr -> UXTO
 
 	Receives map[core.Hash256]*core.Transaction
 	Spends   map[core.Hash256]*core.Transaction
-
-	blockchain *core.Blockchain
 }
 
 // NewWallet returns a wallet with one address
@@ -47,14 +45,14 @@ func (w *Wallet) NewAddress() core.Hash160 {
 	return addr
 }
 
-func (w *Wallet) Send(from, to core.Hash160, value uint32) (core.Hash256, error) {
+func (w *Wallet) CreateTransaction(from, to core.Hash160, value, fee uint32) (*core.Transaction, error) {
 	var inVal uint32
 	txb := core.NewTransactionBuilder()
 
 	// inputs
 	for _, u := range w.uxtos {
 		if u.PubKeyHash == from {
-			txb.AddInput(u.TxHash, u.Index, w.Keys[from].PublicKey)
+			txb.AddInputFrom(u, &w.Keys[from].PublicKey)
 
 			inVal += u.Value
 			if inVal > value {
@@ -64,26 +62,13 @@ func (w *Wallet) Send(from, to core.Hash160, value uint32) (core.Hash256, error)
 	}
 
 	if inVal < value {
-		return core.Hash256{}, fmt.Errorf("insufficient fund, balance=%d, want=%d", inVal, value)
+		return nil, fmt.Errorf("insufficient fund, balance=%d, want=%d", inVal, value)
 	}
 
-	// outputs
 	txb.AddOutput(value, to)
-	if inVal > value {
-		txb.AddOutput(inVal-value, from) // change
-	}
+	txb.AddChange(fee)
 
-	if tx, err := txb.Sign(w.Keys[from]); err != nil {
-		return core.Hash256{}, fmt.Errorf("cannot sign transaction: %w", err)
-	} else {
-		tx.SetHash()
-
-		if err := w.blockchain.AddTransaction(tx); err != nil {
-			return core.Hash256{}, fmt.Errorf("failed to send transaction: %w", err)
-		} else {
-			return tx.Hash, nil
-		}
-	}
+	return txb.Sign(w.Keys[from]), nil
 }
 
 func (w *Wallet) Balance(addr core.Hash160) uint32 {
@@ -105,21 +90,20 @@ func (w *Wallet) GetTransaction(id core.Hash256) *core.Transaction {
 func (w *Wallet) ProcessTransaction(tx *core.Transaction) {
 	// if an uxto occurs in input set, delete it
 	for _, txIn := range tx.Ins {
-		if uxto, ok := w.uxtos[txIn.PrevTxId]; ok && uxto.Index == txIn.N {
+		if uxto, ok := w.uxtos[txIn.PrevTxId]; ok && uxto.N == txIn.N {
 			delete(w.uxtos, txIn.PrevTxId)
 
 			// update balance
 			w.Balances[uxto.PubKeyHash] -= uxto.Value
 
 			// record tx
-			w.Spends[tx.Hash] = tx
+			w.Spends[tx.Hash()] = tx
 
 			log.WithFields(log.Fields{
 				"addr":  fmt.Sprintf("%X", uxto.PubKeyHash[:]),
-				"txId":  fmt.Sprintf("%X", tx.Hash[:]),
-				"index": uxto.Index,
+				"txId":  fmt.Sprintf("%s", tx.Hash().String()),
+				"index": uxto.N,
 				"value": uxto.Value,
-				"to":    fmt.Sprintf("%X", tx.To()),
 			}).Info("Spent UXTO")
 		}
 	}
@@ -128,22 +112,26 @@ func (w *Wallet) ProcessTransaction(tx *core.Transaction) {
 	for i, txOut := range tx.Outs {
 		for _, addr := range w.Addresses {
 			if txOut.PubKeyHash == addr {
-				w.uxtos[tx.Hash] = &core.UXTO{
-					TxHash:       tx.Hash,
-					Index:        uint32(i),
-					Value:        txOut.Value,
-					ScriptPubKey: core.ScriptPubKey{PubKeyHash: addr},
+				w.uxtos[tx.Hash()] = &core.UXTO{
+					TxId: tx.Hash(),
+					N:    uint32(i),
+					TxOut: &core.TxOut{
+						Value: txOut.Value,
+						ScriptPubKey: core.ScriptPubKey{
+							PubKeyHash: txOut.PubKeyHash,
+						},
+					},
 				}
 
 				// update balance
 				w.Balances[addr] += txOut.Value
 
 				// record tx
-				w.Receives[tx.Hash] = tx
+				w.Receives[tx.Hash()] = tx
 
 				log.WithFields(log.Fields{
 					"addr":  fmt.Sprintf("%X", addr[:]),
-					"txId":  fmt.Sprintf("%X", tx.Hash[:]),
+					"txId":  fmt.Sprintf("%s", tx.Hash().String()),
 					"index": i,
 					"value": txOut.Value,
 					"from":  fmt.Sprintf("%X", tx.From()),
@@ -157,21 +145,5 @@ func (w *Wallet) ProcessTransaction(tx *core.Transaction) {
 func (w *Wallet) ProcessBlock(block *core.Block) {
 	for _, tx := range block.Transactions {
 		w.ProcessTransaction(tx)
-	}
-}
-
-func (w *Wallet) Connect(bc *core.Blockchain) {
-	w.blockchain = bc
-
-	// scan blocks
-	currentBlock := bc.Head
-	for currentBlock != nil {
-		w.ProcessBlock(currentBlock)
-
-		log.WithFields(log.Fields{
-			"hash": fmt.Sprintf("%X", currentBlock.Hash[:]),
-		}).Info("Scanned block")
-
-		currentBlock = bc.GetBlock(currentBlock.PrevBlockHash)
 	}
 }

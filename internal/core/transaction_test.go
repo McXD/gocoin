@@ -11,7 +11,7 @@ var PK []*rsa.PublicKey
 var ADDR []Hash160
 
 var TXID []Hash256
-var USET *UXTOSet
+var USET *InMemUXTOSet
 
 func PopulateTestData() {
 	SK = []*rsa.PrivateKey{}

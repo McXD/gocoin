@@ -5,6 +5,7 @@ import (
 	"github.com/boltdb/bolt"
 	"gocoin/internal/core"
 	"gocoin/internal/persistence/binary"
+	"os"
 	"time"
 )
 
@@ -129,10 +130,14 @@ type BlockIndexRepo struct {
 	db *bolt.DB
 }
 
-func NewBlockIndexRepo(dbPath string) (*BlockIndexRepo, error) {
+func NewBlockIndexRepo(rootDir string) (*BlockIndexRepo, error) {
 	repo := &BlockIndexRepo{db: nil}
 
-	db, err := bolt.Open(dbPath, 0600, &bolt.Options{Timeout: 10 * time.Second})
+	if err := os.Mkdir(rootDir+"/db", os.ModePerm); !os.IsExist(err) {
+		return nil, fmt.Errorf("cannot create db directory: %v", err)
+	}
+
+	db, err := bolt.Open(rootDir+"/db/block_index.dat", 0600, &bolt.Options{Timeout: 10 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("cannot open db: %w", err)
 	}

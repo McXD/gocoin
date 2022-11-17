@@ -27,7 +27,7 @@ func TestAllChainState(t *testing.T) {
 		t.Errorf("failed to put: %s", err)
 	}
 
-	// --- Get ---
+	// --- GetUXTO ---
 	if u1G, err := repo.GetUXTO(u1.TxId, u1.N); err != nil {
 		t.Errorf("failed to get: %s", err)
 	} else if !reflect.DeepEqual(u1G, u1) {
@@ -44,7 +44,7 @@ func TestAllChainState(t *testing.T) {
 		t.Errorf("failed to set: %s", err)
 	}
 
-	// --- Get Block ---
+	// --- GetUXTO Block ---
 	if blkIdG, err := repo.GetCurrentBlockHash(); err != nil {
 		t.Errorf("failed to get: %s", err)
 	} else if !reflect.DeepEqual(blkId, blkIdG) {

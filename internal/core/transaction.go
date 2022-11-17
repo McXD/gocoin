@@ -52,15 +52,19 @@ type UXTO struct {
 	*TxOut
 }
 
-type UXTOSet struct {
+type UXTOSet interface {
+	GetUXTO(txId Hash256, n uint32) *UXTO
+}
+
+type InMemUXTOSet struct {
 	uxtos map[Hash256][]*UXTO
 }
 
-func NewUXTOSet() *UXTOSet {
-	return &UXTOSet{uxtos: make(map[Hash256][]*UXTO)}
+func NewUXTOSet() *InMemUXTOSet {
+	return &InMemUXTOSet{uxtos: make(map[Hash256][]*UXTO)}
 }
 
-func (uSet *UXTOSet) Add(uxto *UXTO) {
+func (uSet *InMemUXTOSet) Add(uxto *UXTO) {
 	if uxto == nil {
 		return
 	}
@@ -72,7 +76,7 @@ func (uSet *UXTOSet) Add(uxto *UXTO) {
 	uSet.uxtos[uxto.TxId] = append(uSet.uxtos[uxto.TxId], uxto)
 }
 
-func (uSet *UXTOSet) First(txId Hash256) *UXTO {
+func (uSet *InMemUXTOSet) First(txId Hash256) *UXTO {
 	uxtos := uSet.uxtos[txId]
 	if uxtos == nil || len(uxtos) == 0 {
 		return nil
@@ -81,7 +85,7 @@ func (uSet *UXTOSet) First(txId Hash256) *UXTO {
 	return uxtos[0]
 }
 
-func (uSet *UXTOSet) Get(txId Hash256, n uint32) *UXTO {
+func (uSet *InMemUXTOSet) GetUXTO(txId Hash256, n uint32) *UXTO {
 	uxtos := uSet.uxtos[txId]
 	if uxtos == nil || len(uxtos) == 0 {
 		return nil
@@ -192,7 +196,7 @@ func (tx *Transaction) VerifyTxIn(uxto *UXTO, pk *rsa.PublicKey) error { // this
 	}
 }
 
-func (tx *Transaction) Verify(uSet *UXTOSet) error {
+func (tx *Transaction) Verify(uSet UXTOSet) error {
 	var inValue uint32
 
 	// size
@@ -221,7 +225,7 @@ func (tx *Transaction) Verify(uSet *UXTOSet) error {
 	// skip for coinbase tx
 	if !tx.IsCoinbaseTx() { // in a coinbase tx, input value is essentially zero
 		for _, txIn := range tx.Ins {
-			if uxto := uSet.Get(txIn.PrevTxId, txIn.N); uxto == nil { // no double-spend
+			if uxto := uSet.GetUXTO(txIn.PrevTxId, txIn.N); uxto == nil { // no double-spend
 				return fmt.Errorf("transaction input not found in UXTO set")
 			} else {
 				// "running Script"
@@ -262,6 +266,24 @@ func (tx *Transaction) CalculateOutValue() (outValue uint32, overflow bool) {
 	}
 
 	return outValue, overflow
+}
+
+func (tx *Transaction) CalculateFee(uset UXTOSet) uint32 {
+	if tx.IsCoinbaseTx() {
+		return 0
+	}
+
+	var inValue uint32
+
+	for _, txIn := range tx.Ins {
+		if uxto := uset.GetUXTO(txIn.PrevTxId, txIn.N); uxto != nil {
+			inValue += uxto.Value
+		}
+	}
+
+	outValue, _ := tx.CalculateOutValue()
+
+	return inValue - outValue
 }
 
 func (tx *Transaction) IsCoinbaseTx() bool {
@@ -338,7 +360,12 @@ func (txb *TransactionBuilder) AddOutput(v uint32, pubKeyHash Hash160) *Transact
 
 func (txb *TransactionBuilder) AddChange(txFee uint32) *TransactionBuilder {
 	currentOut, _ := txb.CalculateOutValue()
-	txb.AddOutput(txb.inValue-currentOut-txFee, txb.From())
+	change := txb.inValue - currentOut - txFee
+
+	if change != 0 {
+		txb.AddOutput(change, txb.From())
+	}
+
 	return txb
 }
 

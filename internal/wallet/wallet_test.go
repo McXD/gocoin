@@ -13,7 +13,7 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 	var wAddr2 = w.NewAddress()
 
 	// wAddr1: 100
-	coinbase := core.NewCoinbaseTransaction([]byte("coinbase"), wAddr1, 100)
+	coinbase := core.NewCoinBaseTransaction([]byte("coinbase"), wAddr1, 100, 0)
 
 	w.ProcessTransaction(coinbase)
 	if b1 := w.Balances[wAddr1]; b1 != 100 {
@@ -21,13 +21,16 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 	}
 
 	txb := core.NewTransactionBuilder()
-	txb.AddInputFrom(coinbase, wKey1.PublicKey)
+	txb.AddInputFrom(&core.UXTO{
+		TxId:  coinbase.Hash(),
+		N:     0,
+		TxOut: coinbase.Outs[0],
+	}, &wKey1.PublicKey)
 	txb.AddOutput(50, wAddr2)
-	txb.AddOutput(50, wAddr1) // changes
-	// pay 50 from wAddr1 to wAddr2
-	tx1, _ := txb.Sign(wKey1)
-	tx1.SetHash()
+	txb.AddChange(0)
 
+	// pay 50 from wAddr1 to wAddr2
+	tx1 := txb.Sign(wKey1)
 	w.ProcessTransaction(tx1)
 
 	if b1 := w.Balances[wAddr1]; b1 != 50 {
@@ -39,37 +42,16 @@ func TestWallet_ProcessTransaction(t *testing.T) {
 	}
 }
 
-func TestWallet_Connect(t *testing.T) {
+func TestWallet_CreateTransaction(t *testing.T) {
 	w := NewWallet()
-	bc := core.NewBlockchain(w.Addresses[0], 20, 1000)
-	w.Connect(bc)
-
-	if b := w.Balance(w.Addresses[0]); b != 1000 {
-		t.Fatalf("Initial balance is %d; want %d", b, 1000)
-	}
-}
-
-func TestWallet_Send(t *testing.T) {
-	w := NewWallet()
-	bc := core.NewBlockchain(w.Addresses[0], 20, 1000)
-	w.Connect(bc)
-
 	w.NewAddress()
 	w.NewAddress()
 
-	if _, err := w.Send(w.Addresses[0], w.Addresses[1], 100); err != nil {
-		t.Fatalf("failed to send transaction: %s", err)
-	} else {
-		b := bc.Mine(w.Addresses[2])
-		bc.AddBlock(b)
-		w.ProcessBlock(b)
+	// wAddr0: 100
+	coinbase := core.NewCoinBaseTransaction([]byte("coinbase"), w.Addresses[0], 100, 0)
+	w.ProcessTransaction(coinbase)
 
-		if b := w.Balance(w.Addresses[0]); b != 1000-100 {
-			t.Fatalf("Address0 balance is %d; want %d", b, 1000-100)
-		}
-
-		if b := w.Balance(w.Addresses[1]); b != 100 {
-			t.Fatalf("Address0 balance is %d; want %d", b, 100)
-		}
+	if _, err := w.CreateTransaction(w.Addresses[0], w.Addresses[1], 100, 0); err != nil {
+		t.Fatalf("failed to create transaction: %s", err)
 	}
 }

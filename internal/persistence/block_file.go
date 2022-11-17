@@ -12,8 +12,8 @@ import (
 const (
 	S_UXTO                 = 60 // size of an UXTO
 	MAGIC_DIV_BLOCK uint64 = 0x11_22_33_44_55_66_77_88
-	BLK_BASE               = "data/blk"
-	REV_BASE               = "data/rev"
+	BLK_BASE               = "data"
+	REV_BASE               = "data"
 )
 
 var DIV_BLOCK []byte
@@ -25,10 +25,11 @@ func init() {
 }
 
 type BlockFile struct {
-	bf     *os.File
-	rf     *os.File
-	revs   [][]core.UXTO
-	blocks []core.Block // in-memory cache
+	blkFileSize int
+	bf          *os.File
+	rf          *os.File
+	revs        [][]core.UXTO
+	blocks      []core.Block // in-memory cache
 }
 
 func blkFileName(id uint32) string {
@@ -39,11 +40,10 @@ func revFileName(id uint32) string {
 	return fmt.Sprintf("%s/rev_%06d.dat", REV_BASE, id)
 }
 
-func Open(id uint32) (*BlockFile, error) {
+func OpenBlockFile(rootDir string, id uint32) (*BlockFile, error) {
 	// open or create files
-	homeDir, err := os.UserHomeDir()
-	absBlkFileName := fmt.Sprintf("%s/.gocoin/%s", homeDir, blkFileName(id))
-	absRevFileName := fmt.Sprintf("%s/.gocoin/%s", homeDir, revFileName(id))
+	absBlkFileName := fmt.Sprintf("%s/%s", rootDir, blkFileName(id))
+	absRevFileName := fmt.Sprintf("%s/%s", rootDir, revFileName(id))
 	bf, err := os.OpenFile(absBlkFileName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file: %w", err)
@@ -54,10 +54,11 @@ func Open(id uint32) (*BlockFile, error) {
 	}
 
 	blockFile := &BlockFile{
-		bf:     bf,
-		rf:     rf,
-		blocks: make([]core.Block, 0),
-		revs:   make([][]core.UXTO, 0),
+		blkFileSize: 0,
+		bf:          bf,
+		rf:          rf,
+		blocks:      make([]core.Block, 0),
+		revs:        make([][]core.UXTO, 0),
 	}
 
 	var buf [100_000]byte
@@ -69,6 +70,7 @@ func Open(id uint32) (*BlockFile, error) {
 		if n == 0 { // no more reads
 			break
 		}
+		blockFile.blkFileSize += n
 
 		slices := bytes.Split(buf[:], DIV_BLOCK)
 
@@ -133,4 +135,12 @@ func (blockFile *BlockFile) WriteBlock(b *core.Block, uxtos []*core.UXTO) error 
 
 func (blockFile *BlockFile) Close() error {
 	return blockFile.bf.Close()
+}
+
+func (blockFile *BlockFile) Size() int {
+	return blockFile.blkFileSize
+}
+
+func (blockFile *BlockFile) GetBlockSize() int {
+	return len(blockFile.blocks)
 }
