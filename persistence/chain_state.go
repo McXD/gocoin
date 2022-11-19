@@ -18,14 +18,14 @@ type UXTORef struct {
 	N    uint32
 }
 
-func NewUXTORef(u *core.UXTO) UXTORef {
-	return UXTORef{
+func NewUXTORef(u *core.UXTO) *UXTORef {
+	return &UXTORef{
 		TxId: u.TxId,
 		N:    u.N,
 	}
 }
 
-func (ur UXTORef) Serialize() []byte {
+func (ur *UXTORef) Serialize() []byte {
 	var buf []byte
 
 	buf = append(buf, ur.TxId[:]...)
@@ -34,7 +34,7 @@ func (ur UXTORef) Serialize() []byte {
 	return buf
 }
 
-func (ur UXTORef) SetBytes(buf []byte) {
+func (ur *UXTORef) SetBytes(buf []byte) {
 	ur.TxId = core.Hash256FromSlice(buf[:32])
 	ur.N = marshal.Uint32FromBytes(buf[32:36])
 }
@@ -94,10 +94,10 @@ func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) *core.UXTO {
 
 	err := repo.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("C"))
-		ret := b.Get(UXTORef{
+		ret := b.Get((&UXTORef{
 			TxId: txId,
 			N:    n,
-		}.Serialize())
+		}).Serialize())
 		if ret == nil {
 			return ErrNotFound
 		}
@@ -115,10 +115,10 @@ func (repo *ChainStateRepo) GetUXTO(txId core.Hash256, n uint32) *core.UXTO {
 func (repo *ChainStateRepo) RemoveUXTO(txId core.Hash256, n uint32) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("C"))
-		return b.Delete(UXTORef{
+		return b.Delete((&UXTORef{
 			TxId: txId,
 			N:    n,
-		}.Serialize())
+		}).Serialize())
 	})
 
 	return err

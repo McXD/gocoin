@@ -18,7 +18,7 @@ func TestDeserializeBlockHeader(t *testing.T) {
 	}
 
 	buf := BlockHeader(bh)
-	bhDes := DeserializeBlockHeader(buf)
+	bhDes := UBlockHeader(buf)
 
 	t.Log(spew.Sdump(bh))
 	t.Log(spew.Sdump(bhDes))

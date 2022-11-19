@@ -3,6 +3,7 @@ package rpc
 import (
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"gocoin/blockchain"
 )
 
 type Server struct {
@@ -10,10 +11,10 @@ type Server struct {
 	gin  *gin.Engine
 }
 
-func NewServer(port int) *Server {
+func NewServer(port int, bc *blockchain.Blockchain) *Server {
 	return &Server{
 		Port: port,
-		gin:  NewRouter(),
+		gin:  NewRouter(bc),
 	}
 }
 

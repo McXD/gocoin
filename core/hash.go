@@ -2,7 +2,9 @@ package core
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"github.com/btcsuite/btcutil/base58"
 	"golang.org/x/crypto/ripemd160"
 	"math/big"
 )
@@ -11,6 +13,19 @@ type Hash256 [32]byte
 
 func (hash Hash256) String() string {
 	return fmt.Sprintf("%X", hash[:])
+}
+
+func ParseHash256(str string) (Hash256, error) {
+	hash := Hash256{}
+	decoded, err := hex.DecodeString(str)
+
+	if err != nil {
+		return EmptyHash256(), fmt.Errorf("invalid hash: %w", err)
+	}
+
+	copy(hash[:], decoded[:])
+
+	return hash, nil
 }
 
 func EmptyHash256() Hash256 {
@@ -59,5 +74,15 @@ func Hash160FromSlice(slice []byte) Hash160 {
 }
 
 func (hash *Hash160) String() string {
-	return fmt.Sprintf("%X", hash[:])
+	return base58.Encode(hash[:])
+}
+
+func (hash *Hash160) ParseAddress(str string) error {
+	decoded := base58.Decode(str)
+	if len(decoded) != 20 {
+		return fmt.Errorf("invalid address length")
+	}
+
+	copy(hash[:], decoded[:])
+	return nil
 }

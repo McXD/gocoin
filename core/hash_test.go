@@ -13,3 +13,9 @@ func TestHashTo160(t *testing.T) {
 		t.Fatalf(`HashTo160("Howdy") = %q, want %#q`, sum, want)
 	}
 }
+
+func TestParseHash256(t *testing.T) {
+	txId := "7B7F2FCDEAE0D0740CA0AEC1061B17AE23923B8BA2BFE44BC6D8463520E83E22"
+	parsed, _ := ParseHash256(txId)
+	fmt.Printf("%s", parsed.String())
+}

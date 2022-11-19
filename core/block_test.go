@@ -23,7 +23,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 
 	// valid transaction
 	b := NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(20).
 		AddTransaction(coinbaseNoFee).
 		AddTransaction(tx1).
@@ -36,7 +36,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 
 	// block with invalid transactions
 	b = NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(20).
 		AddTransaction(coinbaseNoFee).
 		AddTransaction(tx1).
@@ -52,7 +52,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 
 	// block with incorrect header
 	b = NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(10).
 		AddTransaction(coinbaseNoFee).
 		Build()
@@ -65,7 +65,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 
 	// block contains a transaction not included in merkle root
 	b = NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(20).
 		AddTransaction(coinbaseNoFee).
 		Build()
@@ -80,7 +80,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 
 	// block contains zero transactions
 	b = NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(20).
 		Build()
 
@@ -92,7 +92,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 
 	// block contains no coinbase
 	b = NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(20).
 		AddTransaction(tx1).
 		Build()
@@ -107,7 +107,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	txPayFee := NewTransaction(USET.First(TXID[0]), SK[0], ADDR[3], 50, 60)
 	coinbaseWithFee := NewCoinBaseTransaction([]byte("coinbase"), ADDR[0], 100, 20)
 	b = NewBlockBuilder().
-		BaseOn(Hash256{}, -1).
+		BaseOn(Hash256{}, 0).
 		SetBits(20).
 		AddTransaction(coinbaseWithFee).
 		AddTransaction(txPayFee).

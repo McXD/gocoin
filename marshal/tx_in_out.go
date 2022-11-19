@@ -36,7 +36,9 @@ func DeserializeScriptSig(buf []byte) *core.ScriptSig {
 	p += pknSize
 	ss.PK.E = IntFromBytes(buf[p : p+8])
 	p += 8
-	ss.Signature = buf[p:]
+	sig := make([]byte, len(buf)-p)
+	copy(sig, buf[p:])
+	ss.Signature = sig
 
 	return ss
 }
@@ -82,7 +84,9 @@ func DeserializeTxIn(buf []byte) *core.TxIn {
 	if txIn.PrevTxId != core.EmptyHash256() { // read to scripSig
 		txIn.ScriptSig = *DeserializeScriptSig(buf[p : p+scripSigSize])
 	} else { // read to Coinbase
-		txIn.Coinbase = buf[p : p+scripSigSize]
+		scriptSig := make([]byte, scripSigSize)
+		copy(scriptSig, buf[p:p+scripSigSize])
+		txIn.Coinbase = scriptSig
 	}
 	p += scripSigSize
 

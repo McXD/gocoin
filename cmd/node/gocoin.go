@@ -1,19 +1,39 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"gocoin/blockchain"
+	"gocoin/rpc"
+	"gocoin/wallet"
 	"os"
 	"runtime/debug"
+	"time"
 )
 
 func greeting() {
 	fmt.Print(`
+                                                
+                     ,@,,,,,(&                    
+            .,,,*,#   &,,,,     ,,@,,*            
+            ,,,,@@@     ,* @@    *,,,,            
+             @,,,@     ,@@@&   @,,,,,             
+             *,,,,,,,,@...,.*,,,,,,,,             
+             .,,,,,,,,,,%@@,,,,,,,,,,             
+             @,,,,,,,,,,,,,,,,,,,,,,,             
+              ,,,,,,,,,,,,,,,,,,,,,,,#            
+           @@ ,,,,,,,,,,,,,,,,,,,,,,,@/           
+             @,,,,,,,,,,,,,,,,,,,,,,,.            
+             .,,,,,,,,,,,,,,,,,,,,,,,.            
+             &,,,,,,,,,,,,,,,,,,,,,,,(            
+              ,,,,,,,,,,,,,,,,,,,,,,(             
+               @,,,,,,,,,,,,,,,,,,,               
+              ...@  %,,,,,,,,.@   .@              
+                                        
   __      _              __                       
  /__  _  /   _  o ._    (_ _|_  _. ._ _|_  _   _| 
- \_| (_) \_ (_) | | |   __) |_ (_| |   |_ (/_ (_| 
-
+ \_| (_) \_ (_) | | |   __) |_ (_| |   |_ (/_ (_|
 
 `)
 }
@@ -37,24 +57,42 @@ func main() {
 	initDirs()
 
 	bc, err := blockchain.NewBlockchain("/tmp/gocoin")
-	mainAddress, err := bc.DiskWallet.NewAddress()
+
+	err = initWallet(bc.DiskWallet)
+	if err != nil {
+		debug.PrintStack()
+		panic(err)
+	}
+	miningAddr := bc.DiskWallet.ListAddresses()[0]
+
+	go startRPC(8080, bc)
 
 	for {
-		b, _ := bc.Mine([]byte("coinbase"), mainAddress, blockchain.BLOCK_REWARD)
+		var timestamp [10]byte
+		binary.PutVarint(timestamp[:], time.Now().UnixNano())
+		coinbase := append(timestamp[:], []byte("coinbase")...)
+		b, _ := bc.Mine(coinbase, miningAddr, blockchain.BLOCK_REWARD)
 
 		err = bc.AddBlock(b)
-
 		if err != nil {
 			debug.PrintStack()
 			panic(err)
 		}
 
 		err = bc.DiskWallet.ProcessBlock(b)
-
 		if err != nil {
 			debug.PrintStack()
 			panic(err)
 		}
+	}
+}
+
+func startRPC(port int, bc *blockchain.Blockchain) {
+	server := rpc.NewServer(port, bc)
+	err := server.Run()
+	if err != nil {
+		debug.PrintStack()
+		panic(err)
 	}
 }
 
@@ -67,6 +105,18 @@ func initDirs() {
 		debug.PrintStack()
 		panic(err)
 	}
+}
+
+func initWallet(w *wallet.DiskWallet) error {
+	// create 5 additional addresses
+	for i := 0; i < 5; i++ {
+		_, err := w.NewAddress()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func cleanup() {

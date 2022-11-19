@@ -186,6 +186,7 @@ func (repo *BlockIndexRepo) GetTransactionRecord(txId core.Hash256) (*Transactio
 		if ret == nil {
 			return fmt.Errorf("record not found")
 		}
+
 		tr = UTransactionRecord(ret)
 
 		return nil

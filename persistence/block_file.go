@@ -145,3 +145,26 @@ func (blockFile *BlockFile) GetUndoFileSize() int {
 func (blockFile *BlockFile) GetBlockCount() int {
 	return len(blockFile.blocks)
 }
+
+func GetBlock(rootDir string, blkRec BlockIndexRecord) (*core.Block, error) {
+	bf, err := NewBlockFile(rootDir, blkRec.BlockFileID)
+	defer bf.Close()
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot open block file: %w", err)
+	}
+
+	return bf.blocks[blkRec.Offset], nil
+}
+
+func GetTransaction(rootDir string, txRec *TransactionRecord) (*core.Transaction, error) {
+	bf, err := NewBlockFile(rootDir, txRec.BlockFileID)
+	defer bf.Close()
+	if err != nil {
+		return nil, fmt.Errorf("cannot open block file: %w", err)
+	}
+
+	tx := bf.blocks[txRec.BlockOffset].Transactions[txRec.TxOffset]
+
+	return tx, nil
+}

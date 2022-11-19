@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"github.com/boltdb/bolt"
+	log "github.com/sirupsen/logrus"
 	"gocoin/core"
 	"gocoin/marshal"
 	"gocoin/persistence"
@@ -31,7 +32,6 @@ func NewDiskWallet(rootDir string) (*DiskWallet, error) {
 	bucketKeys := [][]byte{
 		[]byte("addresses"),    // address -> 0
 		[]byte("keys"),         // address -> sk
-		[]byte("balances"),     // address -> uint32
 		[]byte("uxtos"),        // uRef -> UXTO
 		[]byte("transactions"), // txid -> transactions
 	}
@@ -65,7 +65,6 @@ func (w *DiskWallet) NewAddress() (core.Hash160, error) {
 		if err := addresses.Put(addr[:], []byte{}); err != nil {
 			return fmt.Errorf("failed to put address: %w", err)
 		}
-
 		if err := keys.Put(addr[:], x509.MarshalPKCS1PrivateKey(sk)); err != nil {
 			return fmt.Errorf("failed to put key: %w", err)
 		}
@@ -77,7 +76,25 @@ func (w *DiskWallet) NewAddress() (core.Hash160, error) {
 		return [20]byte{}, fmt.Errorf("failed to update db: %w", err)
 	}
 
+	log.Infof("added new address: %s", addr.String())
+
 	return addr, nil
+}
+
+func (w *DiskWallet) ListAddresses() []core.Hash160 {
+	var addresses []core.Hash160
+
+	_ = w.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("addresses"))
+		c := b.Cursor()
+
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			addresses = append(addresses, core.Hash160FromSlice(k))
+		}
+		return nil
+	})
+
+	return addresses
 }
 
 func (w *DiskWallet) getKey(address core.Hash160) (*rsa.PrivateKey, error) {
@@ -124,7 +141,7 @@ func (w *DiskWallet) CreateTransaction(from, to core.Hash160, value, fee uint32)
 				txb.AddInputFrom(uxto, &sk.PublicKey)
 
 				inVal += uxto.Value
-				if inVal > value {
+				if inVal >= value+fee {
 					break
 				}
 			}
@@ -146,28 +163,26 @@ func (w *DiskWallet) CreateTransaction(from, to core.Hash160, value, fee uint32)
 	return txb.Sign(sk), nil
 }
 
-func (w *DiskWallet) GetBalance(addr core.Hash160) (uint32, error) {
-	var balance uint32
+// GetBalances sums up all the UXTOS for all addresses.
+func (w *DiskWallet) GetBalances() map[core.Hash160]uint32 {
+	balances := make(map[core.Hash160]uint32)
+	for _, addr := range w.ListAddresses() {
+		balances[addr] = 0
+	}
 
-	err := w.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("balances"))
+	_ = w.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("uxtos"))
+		c := b.Cursor()
 
-		balanceBytes := b.Get(addr[:])
-		if balanceBytes == nil {
-			balance = 0
-			return nil
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			uxto := marshal.DeserializeUXTO(v)
+			balances[uxto.PubKeyHash] += uxto.Value
 		}
-
-		balance = marshal.Uint32FromBytes(balanceBytes)
 
 		return nil
 	})
 
-	if err != nil {
-		return 0, err
-	}
-
-	return balance, nil
+	return balances
 }
 
 func (w *DiskWallet) ListUnspent(addr core.Hash160) ([]*core.UXTO, error) {
@@ -226,32 +241,32 @@ func (w *DiskWallet) ProcessTransaction(tx *core.Transaction) error {
 		relevant := false // whether the database is updated
 		uxtos := btx.Bucket([]byte("uxtos"))
 		addresses := btx.Bucket([]byte("addresses"))
-		balances := btx.Bucket([]byte("balances"))
 		transactions := btx.Bucket([]byte("transactions"))
 
 		// if an uxto occurs in input set, delete it
+		log.Infof("Processing inputs of transaction %s", txId)
 		for _, in := range tx.Ins {
 			uRef := persistence.UXTORef{
-				TxId: txId,
+				TxId: in.PrevTxId,
 				N:    in.N,
 			}
+
+			log.Infof("Processsing input %s:%d", uRef.TxId, uRef.N)
 
 			uxtoBytes := uxtos.Get(uRef.Serialize())
 			if uxtoBytes == nil {
 				continue
 			}
 			relevant = true
-			uxto := marshal.DeserializeUXTO(uxtoBytes)
 
 			if err := uxtos.Delete(uRef.Serialize()); err != nil {
 				return fmt.Errorf("failed to delete uxto: %w", err)
 			}
 
-			// update balance
-			balance, _ := w.GetBalance(uxto.PubKeyHash)
-			balances.Put(uxto.PubKeyHash[:], marshal.Uint32ToBytes(balance-uxto.Value))
+			log.Infof("delete uxto: txId=%s, vout=%d", uRef.TxId, uRef.N)
 		}
 
+		log.Infof("Processing outputs of transaction %s", txId)
 		// if output contains one of our addresses, add it
 		for i, out := range tx.Outs {
 			if addresses.Get(out.PubKeyHash[:]) != nil {
@@ -272,9 +287,7 @@ func (w *DiskWallet) ProcessTransaction(tx *core.Transaction) error {
 					return fmt.Errorf("failed to put uxto: %w", err)
 				}
 
-				// update balance
-				balance, _ := w.GetBalance(out.PubKeyHash)
-				balances.Put(out.PubKeyHash[:], marshal.Uint32ToBytes(balance+out.Value))
+				log.Infof("added uxto: txId=%s, vout=%d, value=%d", uRef.TxId, uRef.N, out.Value)
 			}
 		}
 

@@ -28,7 +28,7 @@ func TestAllChainState(t *testing.T) {
 	}
 
 	// --- GetUXTO ---
-	if u1G, err := repo.GetUXTO(u1.TxId, u1.N); err != nil {
+	if u1G := repo.GetUXTO(u1.TxId, u1.N); err != nil {
 		t.Errorf("failed to get: %s", err)
 	} else if !reflect.DeepEqual(u1G, u1) {
 		t.Errorf("objects not equal")

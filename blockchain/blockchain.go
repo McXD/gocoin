@@ -11,26 +11,18 @@ import (
 )
 
 const (
-	INITIAL_BITS = 15
+	INITIAL_BITS = 23
 	BLOCK_REWARD = 1000
 )
 
 type Blockchain struct {
-	rootDir string
+	RootDir string
 	*wallet.DiskWallet
 	*persistence.BlockFile
 	*persistence.BlockIndexRepo
 	*persistence.ChainStateRepo
 	// transactions in mempool is gaurenteed be valid according to the current state, readily to be mined
 	mempool list.List
-}
-
-// LoadBlockchainFrom the given root directory, whose data includes:
-// 1. block index
-// 2. chain state
-// 3. wallet
-func LoadBlockchainFrom(rootDir string) (*Blockchain, error) {
-	return nil, nil
 }
 
 // NewBlockchain creates a new blockchain at path as root directory.
@@ -57,7 +49,7 @@ func NewBlockchain(rootDir string) (*Blockchain, error) {
 	bf, err := persistence.NewBlockFile(rootDir, bfId)
 
 	b := Blockchain{
-		rootDir:        rootDir,
+		RootDir:        rootDir,
 		DiskWallet:     w,
 		BlockFile:      bf,
 		BlockIndexRepo: bi,
@@ -105,6 +97,8 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 		txFee += tx.CalculateFee(bc.ChainStateRepo)
 		blkSize += len(marshal.Transaction(tx))
 
+		log.Infof("Selected transaction for mining: %s", tx.Hash())
+
 		if blkSize > 10*1024 { // size of a single block is less 10 KB
 			break
 		}
@@ -138,14 +132,19 @@ func (bc *Blockchain) ReceiveTransaction(tx *core.Transaction) error {
 		if tx.Hash() == e.Value.(*core.Transaction).Hash() {
 			return fmt.Errorf("transaction already exists in the mempool")
 		}
-
 		// TODO: check duplicated UXTOs
+	}
+
+	if bc.mempool.Len() == 0 {
+		bc.mempool.PushBack(tx)
+		return nil
 	}
 
 	fee := tx.CalculateFee(bc.ChainStateRepo)
 	for e := bc.mempool.Front(); e != nil; e = e.Next() {
 		if fee > e.Value.(*core.Transaction).CalculateFee(bc.ChainStateRepo) {
 			bc.mempool.InsertBefore(tx, e)
+			log.Infof("Added transaction input mempool: %s", tx.Hash())
 			break
 		}
 	}
@@ -219,7 +218,7 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 			return fmt.Errorf("failed to close block file %d: %w", bc.BlockFile.Id, err)
 		}
 
-		if bc.BlockFile, err = persistence.NewBlockFile(bc.rootDir, bc.BlockFile.Id+1); err != nil {
+		if bc.BlockFile, err = persistence.NewBlockFile(bc.RootDir, bc.BlockFile.Id+1); err != nil {
 			return fmt.Errorf("failed to open block file %d: %w", bc.BlockFile.Id+1, err)
 		}
 
@@ -248,6 +247,7 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 
 	// index the transactions
 	for i, tx := range block.Transactions {
+		log.Infof("Indexed transaction %s", tx.Hash())
 		err = bc.BlockIndexRepo.PutTransactionRecord(tx.Hash(), &persistence.TransactionRecord{
 			BlockFileID: bc.BlockFile.Id,
 			BlockOffset: uint32(bc.BlockFile.GetBlockCount() - 1),
