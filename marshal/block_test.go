@@ -11,7 +11,7 @@ import (
 func TestDeserializeBlockHeader(t *testing.T) {
 	bh := &core2.BlockHeader{
 		Time:           time.Now().Unix(),
-		Bits:           20,
+		NBits:          20,
 		Nonce:          123144,
 		HashPrevBlock:  core2.RandomHash256(),
 		HashMerkleRoot: core2.RandomHash256(),
@@ -46,7 +46,7 @@ func TestDeserializeBlock(t *testing.T) {
 		Sign(SK[0])
 	b := core2.NewBlockBuilder().
 		BaseOn(core2.EmptyHash256(), 1000).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(tx1).
 		AddTransaction(tx2).
 		AddTransaction(tx3).

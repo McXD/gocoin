@@ -71,7 +71,11 @@ func main() {
 		var timestamp [10]byte
 		binary.PutVarint(timestamp[:], time.Now().UnixNano())
 		coinbase := append(timestamp[:], []byte("coinbase")...)
-		b, _ := bc.Mine(coinbase, miningAddr, blockchain.BLOCK_REWARD)
+		b, err := bc.Mine(coinbase, miningAddr, blockchain.BLOCK_REWARD)
+		if err != nil {
+			debug.PrintStack()
+			panic(err)
+		}
 
 		err = bc.AddBlock(b)
 		if err != nil {

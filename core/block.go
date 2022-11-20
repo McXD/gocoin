@@ -12,27 +12,36 @@ import (
 
 type BlockHeader struct {
 	Time int64
-	// Bits is a compact representation of the target value of PoW (i.e., number of leading zeros)
-	Bits           uint8
+	// NBits is a compact representation of the target value of PoW (i.e., number of leading zeros), stored in big-endian
+	NBits          uint32
 	Nonce          uint32
 	HashPrevBlock  Hash256
 	HashMerkleRoot Hash256
 }
 
+// TargetValue calculates the target value of PoW from NBits
 func (header *BlockHeader) TargetValue() *big.Int {
-	var targetInt = big.NewInt(1)
-	targetInt.Lsh(targetInt, uint(256-int(header.Bits))).Add(targetInt, big.NewInt(-1))
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, header.NBits)                      // NBits is stored in big-endian
+	exp := int(buf[0]) - 3                                             // the first byte is the exponent
+	mantissa := binary.BigEndian.Uint32(append([]byte{0}, buf[1:]...)) // the rest is the mantissa
 
-	return targetInt
+	target := big.NewInt(0)
+	if exp >= 0 {
+		target.Exp(big.NewInt(256), big.NewInt(int64(exp)), nil)
+		target.Mul(target, big.NewInt(int64(mantissa)))
+	} else {
+		target.SetBytes(buf[1 : 4+exp])
+	}
+
+	return target
 }
 
 func (header *BlockHeader) Hash() Hash256 {
-	data := make([]byte, 8+1+4+32+32)
+	data := make([]byte, 8+4+4+32+32)
 
 	binary.BigEndian.PutUint64(data, uint64(header.Time))
-
-	data[8] = header.Bits
-
+	binary.BigEndian.PutUint32(data, header.NBits)
 	binary.BigEndian.PutUint32(data, header.Nonce)
 
 	for i := 0; i < 32; i++ {
@@ -93,14 +102,14 @@ func (block *Block) CalculateFee(uSet UXTOSet) (fee uint32, overflow bool) {
 	return fee, overflow
 }
 
-func (block *Block) Verify(uSet UXTOSet, currentBits uint8, timeWindow int64, blockReward uint32) error {
+func (block *Block) Verify(uSet UXTOSet, currentBits uint32, timeWindow int64, blockReward uint32) error {
 	// verify header
 	if math.Abs(float64(time.Now().Unix()-block.Time)) > float64(timeWindow) {
 		return fmt.Errorf("invalid timestamp")
 	}
 
-	if block.Bits != currentBits {
-		return fmt.Errorf("invalid Bits")
+	if block.NBits != currentBits {
+		return fmt.Errorf("invalid NBits")
 	}
 
 	if mr, err := block.CalculateMerkleRoot(); err != nil {
@@ -171,9 +180,37 @@ func (bb *BlockBuilder) BaseOn(prevBlockHash Hash256, prevBlockHeight uint32) *B
 	return bb
 }
 
-func (bb *BlockBuilder) SetBits(bits uint8) *BlockBuilder {
-	bb.Bits = bits
+func (bb *BlockBuilder) SetNBits(nBits uint32) *BlockBuilder {
+	bb.NBits = nBits
 	return bb
+}
+
+func ParseNBits(target *big.Int) uint32 {
+	// TODO: cover edge cases
+	buf := make([]byte, 34) // make room for underflow
+	targetBytes := target.Bytes()
+	nBitsByte := make([]byte, 4)
+
+	copy(buf[32-len(targetBytes):], targetBytes)
+
+	var i int
+	for i = 0; i < len(buf); i++ {
+		if buf[i] == 0 {
+			continue
+		} else {
+			break
+			// i points to the first non-zero byte
+		}
+	}
+
+	for j := 1; j < 4; j++ {
+		nBitsByte[j] = buf[i]
+		i++
+	}
+
+	nBitsByte[0] = byte(35 - i)
+
+	return binary.BigEndian.Uint32(nBitsByte)
 }
 
 func (bb *BlockBuilder) AddTransaction(tx *Transaction) *BlockBuilder {
@@ -183,9 +220,9 @@ func (bb *BlockBuilder) AddTransaction(tx *Transaction) *BlockBuilder {
 
 // Build returns a full block
 // A block is built through the following process:
-//	1. set the timestamp to current time
-//	2. calculate and set the HashMerkleTree in the block header
-//	3. set the nonce until the header hashes to lower than value implied by Bits (PoW)
+//  1. set the timestamp to current time
+//  2. calculate and set the HashMerkleTree in the block header
+//  3. set the nonce until the header hashes to lower than value implied by NBits (PoW)
 //  4. set the block hash
 func (bb *BlockBuilder) Build() *Block {
 	bb.Time = time.Now().Unix()

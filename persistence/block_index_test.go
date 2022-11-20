@@ -29,7 +29,7 @@ func TestAllBlockFile(t *testing.T) {
 	blkRec := &BlockIndexRecord{
 		BlockHeader: core2.BlockHeader{
 			Time:           time.Now().Unix(),
-			Bits:           20,
+			NBits:          20,
 			Nonce:          1231414,
 			HashPrevBlock:  core2.RandomHash256(),
 			HashMerkleRoot: core2.RandomHash256(),

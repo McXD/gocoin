@@ -8,11 +8,14 @@ import (
 	"gocoin/marshal"
 	"gocoin/persistence"
 	"gocoin/wallet"
+	"math/big"
 )
 
 const (
-	INITIAL_BITS = 23
-	BLOCK_REWARD = 1000
+	INITIAL_BITS        = 0x1e7fffff
+	BLOCK_REWARD        = 1000
+	EXPECTED_BLOCK_TIME = 7  // seconds
+	N_BITS_ADJUSTMENT   = 20 // every 20 blocks
 )
 
 type Blockchain struct {
@@ -72,21 +75,25 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 	}
 
 	currentBlockIndex, err := bc.GetBlockIndexRecord(currentBlockHash)
-	if err == persistence.ErrNotFound && currentBlockHash != core.EmptyHash256() { // not the first block
-		return nil, fmt.Errorf("failed to get block %x: %w", currentBlockHash[:], err)
-	} else { // first block
+	if err == persistence.ErrNotFound && currentBlockHash == core.EmptyHash256() { // genesis block
 		currentBlockIndex = &persistence.BlockIndexRecord{
 			BlockHeader: core.BlockHeader{
-				Bits: INITIAL_BITS, // TODO: initial difficulty
+				NBits: INITIAL_BITS, // TODO: initial difficulty
 			},
 			Height: 4294967295, // -1
 		}
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get block %x: %w", currentBlockHash[:], err)
 	}
 
 	bb := core.NewBlockBuilder()
 	bb.BaseOn(currentBlockHash, currentBlockIndex.Height)
-	bb.SetBits(currentBlockIndex.Bits) // TODO: adjust difficulty
-
+	nBits, err := bc.GetNBitsFor(bb.Block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get nBits for block: %w", err)
+	}
+	bb.SetNBits(nBits)
+	log.Infof("Block Difficulty: %064x", bb.TargetValue())
 	// transaction selection
 	var txFee uint32
 	var blkSize int
@@ -111,7 +118,7 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 		bb.AddTransaction(tx)
 	}
 
-	log.Infof("Start mining a block, prevBlockHash: %s", bb.HashPrevBlock)
+	log.Infof("Start mining a block: prevBlockHash=%s, currentHeight=%d", bb.HashPrevBlock, bb.Height)
 	b := bb.Build()
 	log.Infof("Mined a block: %s", b.Hash)
 
@@ -161,7 +168,7 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 		} else { // genesis block
 			prevBlockIndex = &persistence.BlockIndexRecord{
 				BlockHeader: core.BlockHeader{
-					Bits: INITIAL_BITS, // TODO: initial difficulty
+					NBits: INITIAL_BITS, // TODO: initial difficulty
 				},
 				Height: 4294967295, // overflow it to 0
 			}
@@ -171,7 +178,11 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 	}
 
 	var spent []*core.UXTO
-	if err := block.Verify(bc.ChainStateRepo, prevBlockIndex.Bits, 500, BLOCK_REWARD); err != nil {
+	nBits, err := bc.GetNBitsFor(block)
+	if err != nil {
+		return fmt.Errorf("failed to get nBits for block %d: %w", block.Height, err)
+	}
+	if err := block.Verify(bc.ChainStateRepo, nBits, 500, BLOCK_REWARD); err != nil {
 		return fmt.Errorf("failed to verify block: %w", err)
 	}
 
@@ -236,7 +247,7 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 	// index the block
 	err = bc.BlockIndexRepo.PutBlockIndexRecord(block.Hash, &persistence.BlockIndexRecord{
 		BlockHeader: block.BlockHeader,
-		Height:      prevBlockIndex.Height + 1,
+		Height:      block.Height,
 		TxCount:     uint32(len(block.Transactions)),
 		BlockFileID: bc.BlockFile.Id,
 		Offset:      uint32(bc.BlockFile.GetBlockCount() - 1),
@@ -273,24 +284,41 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 		return fmt.Errorf("failed to update current block hash: %w", err)
 	}
 
-	log.Infof("Blockchain tip changes to: %s", block.Hash)
+	log.Infof("Blockchain tip changes to: %s, height=%d", block.Hash, block.Height)
 	return nil
+}
+
+func (bc *Blockchain) GetNBitsFor(block *core.Block) (uint32, error) {
+	if block.Height == 0 {
+		return INITIAL_BITS, nil
+	}
+
+	brLast, err := bc.GetBlockIndexRecordOfHeight(block.Height - 1)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-1, err)
+	}
+
+	if block.Height == 1 || block.Height%N_BITS_ADJUSTMENT != 1 {
+		return brLast.NBits, nil
+	} else {
+		brAgo, err := bc.GetBlockIndexRecordOfHeight(block.Height - N_BITS_ADJUSTMENT)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-N_BITS_ADJUSTMENT, err)
+		}
+
+		duration := brLast.Time - brAgo.Time // in seconds
+		tmp := big.Int{}
+		tmp.Mul(brAgo.TargetValue(), big.NewInt(duration))
+		newTarget := big.Int{}
+		newTarget.Div(&tmp, big.NewInt(int64(N_BITS_ADJUSTMENT*EXPECTED_BLOCK_TIME)))
+
+		log.Infof("Adjusted Difficulty from %064x to %064x", brAgo.TargetValue(), &newTarget)
+		return core.ParseNBits(&newTarget), nil
+	}
 }
 
 // Reorganize the blockchain to the new active tip. The given blocks should be a series of new blocks of the longest chain.
 // After reorganization, the mempool is cleared.
 func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 	return nil
-}
-
-func (bc *Blockchain) StartMine() {
-
-}
-
-func (bc *Blockchain) StartP2P() {
-
-}
-
-func (bc *Blockchain) StartRPC() {
-
 }

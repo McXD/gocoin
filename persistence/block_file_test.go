@@ -29,7 +29,7 @@ func TestOpenAndWriteBlockFile(t *testing.T) {
 		Sign(SK[0])
 	b := core2.NewBlockBuilder().
 		BaseOn(core2.EmptyHash256(), 1000).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(tx0).
 		AddTransaction(tx1).
 		AddTransaction(tx2).

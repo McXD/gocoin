@@ -230,6 +230,31 @@ func (repo *BlockIndexRepo) GetBlockIndexRecord(blkId core.Hash256) (*BlockIndex
 	return tr, nil
 }
 
+func (repo *BlockIndexRepo) GetBlockIndexRecordOfHeight(height uint32) (*BlockIndexRecord, error) {
+	// TODO: inefficient! need proper index
+	var tr *BlockIndexRecord
+
+	err := repo.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("b"))
+		c := b.Cursor()
+
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			tr = UBlockIndexRecord(v)
+			if tr.Height == height {
+				return nil
+			}
+		}
+
+		return ErrNotFound
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return tr, nil
+}
+
 func (repo *BlockIndexRepo) PutFileInfoRecord(fileId uint32, r *FileInfoRecord) error {
 	err := repo.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("f"))

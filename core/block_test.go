@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/rsa"
+	"math/big"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	// valid transaction
 	b := NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(coinbaseNoFee).
 		AddTransaction(tx1).
 		AddTransaction(tx2).
@@ -37,7 +38,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	// block with invalid transactions
 	b = NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(coinbaseNoFee).
 		AddTransaction(tx1).
 		AddTransaction(tx2).
@@ -53,12 +54,12 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	// block with incorrect header
 	b = NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(10).
+		SetNBits(10).
 		AddTransaction(coinbaseNoFee).
 		Build()
 
 	if err := b.Verify(USET, 20, 1000, 100); err == nil {
-		t.Fatalf("verification passed; expected Bits error")
+		t.Fatalf("verification passed; expected NBits error")
 	} else {
 		t.Log(err)
 	}
@@ -66,7 +67,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	// block contains a transaction not included in merkle root
 	b = NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(coinbaseNoFee).
 		Build()
 
@@ -81,7 +82,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	// block contains zero transactions
 	b = NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(20).
+		SetNBits(20).
 		Build()
 
 	if err := b.Verify(USET, 20, 1000, 100); err == nil {
@@ -93,7 +94,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	// block contains no coinbase
 	b = NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(tx1).
 		Build()
 
@@ -108,7 +109,7 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 	coinbaseWithFee := NewCoinBaseTransaction([]byte("coinbase"), ADDR[0], 100, 20)
 	b = NewBlockBuilder().
 		BaseOn(Hash256{}, 0).
-		SetBits(20).
+		SetNBits(20).
 		AddTransaction(coinbaseWithFee).
 		AddTransaction(txPayFee).
 		Build()
@@ -117,5 +118,31 @@ func TestBlock_BuildAndVerify(t *testing.T) {
 		t.Fatalf("verification passed; expected invalid coinbase")
 	} else {
 		t.Log(err)
+	}
+}
+
+func TestNBits(t *testing.T) {
+	bb := NewBlockBuilder()
+
+	nBits := []uint32{
+		uint32(0x08123456),
+		uint32(0x05123456),
+		uint32(0x03123456),
+		uint32(0x02123456),
+		uint32(0x01123456),
+	}
+
+	targets := make([]*big.Int, len(nBits))
+
+	for i, n := range nBits {
+		bb.SetNBits(n)
+		t.Logf("nBits: 0x%08x, target: 0x%064x", n, bb.TargetValue())
+		targets[i] = bb.TargetValue()
+	}
+
+	t.Logf("\n")
+
+	for i := 0; i < len(targets); i++ {
+		t.Logf("target: 0x%064x, nBits: 0x%08x", targets[i], ParseNBits(targets[i]))
 	}
 }
