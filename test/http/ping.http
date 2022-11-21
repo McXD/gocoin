@@ -1,3 +1,0 @@
-### Ping the node
-GET {{baseUrl}}/ping
-Accept: application/json

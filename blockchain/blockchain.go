@@ -33,7 +33,7 @@ type Blockchain struct {
 func NewBlockchain(rootDir string) (*Blockchain, error) {
 	w, err := wallet.NewDiskWallet(rootDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create or create wallet: %w", err)
+		return nil, fmt.Errorf("failed to load or create wallet: %w", err)
 	}
 	bi, err := persistence.NewBlockIndexRepo(rootDir)
 	if err != nil {
@@ -67,12 +67,15 @@ func NewBlockchain(rootDir string) (*Blockchain, error) {
 // 2. The block must contain at least one coinbase transaction
 // 3. Transactions with higher fees are preferred
 func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward uint32) (*core.Block, error) {
+	log.Debugf("Start preparing a block")
+
 	currentBlockHash, err := bc.ChainStateRepo.GetCurrentBlockHash()
 	if err == persistence.ErrNotFound { // first block
 		currentBlockHash = core.EmptyHash256()
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to get current block hash: %w", err)
 	}
+	log.Debugf("Prev block hash: %s", currentBlockHash.String())
 
 	currentBlockIndex, err := bc.GetBlockIndexRecord(currentBlockHash)
 	if err == persistence.ErrNotFound && currentBlockHash == core.EmptyHash256() { // genesis block
@@ -93,7 +96,7 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 		return nil, fmt.Errorf("failed to get nBits for block: %w", err)
 	}
 	bb.SetNBits(nBits)
-	log.Infof("Block Difficulty: %064x", bb.TargetValue())
+	log.Debugf("Current difficulty: %064x", bb.TargetValue())
 	// transaction selection
 	var txFee uint32
 	var blkSize int
@@ -101,10 +104,11 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 	for e := bc.mempool.Front(); e != nil; e = e.Next() {
 		tx := e.Value.(*core.Transaction)
 		txs = append(txs, tx)
-		txFee += tx.CalculateFee(bc.ChainStateRepo)
+		fee := tx.CalculateFee(bc.ChainStateRepo)
+		txFee += fee
 		blkSize += len(marshal.Transaction(tx))
 
-		log.Infof("Selected transaction for mining: %s", tx.Hash())
+		log.Debugf("Selected transaction for mining: hash=%s, fee=%d", tx.Hash(), fee)
 
 		if blkSize > 10*1024 { // size of a single block is less 10 KB
 			break
@@ -118,9 +122,9 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 		bb.AddTransaction(tx)
 	}
 
-	log.Infof("Start mining a block: prevBlockHash=%s, currentHeight=%d", bb.HashPrevBlock, bb.Height)
+	log.Debugf("Start mining block: prevBlockHash=%s, height=%d, difficulty=%08x", bb.HashPrevBlock.String(), bb.Height, bb.NBits)
 	b := bb.Build()
-	log.Infof("Mined a block: %s", b.Hash)
+	log.Infof("***Mined a block***: hash: %s, prevBlockHash=%s, height=%d, difficulty=%08x", b.Hash.String(), bb.HashPrevBlock.String(), bb.Height, bb.NBits)
 
 	return b, nil
 }
@@ -258,7 +262,7 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 
 	// index the transactions
 	for i, tx := range block.Transactions {
-		log.Infof("Indexed transaction %s", tx.Hash())
+		log.Debugf("Indexed transaction %s", tx.Hash())
 		err = bc.BlockIndexRepo.PutTransactionRecord(tx.Hash(), &persistence.TransactionRecord{
 			BlockFileID: bc.BlockFile.Id,
 			BlockOffset: uint32(bc.BlockFile.GetBlockCount() - 1),
@@ -312,7 +316,7 @@ func (bc *Blockchain) GetNBitsFor(block *core.Block) (uint32, error) {
 		newTarget := big.Int{}
 		newTarget.Div(&tmp, big.NewInt(int64(N_BITS_ADJUSTMENT*EXPECTED_BLOCK_TIME)))
 
-		log.Infof("Adjusted Difficulty from %064x to %064x", brAgo.TargetValue(), &newTarget)
+		log.Infof("Adjusted Difficulty from %08x to %08x", brAgo.NBits, core.ParseNBits(&newTarget))
 		return core.ParseNBits(&newTarget), nil
 	}
 }

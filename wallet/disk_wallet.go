@@ -244,14 +244,14 @@ func (w *DiskWallet) ProcessTransaction(tx *core.Transaction) error {
 		transactions := btx.Bucket([]byte("transactions"))
 
 		// if an uxto occurs in input set, delete it
-		log.Infof("Processing inputs of transaction %s", txId)
+		log.Debugf("Processing inputs of transaction %s", txId)
 		for _, in := range tx.Ins {
 			uRef := persistence.UXTORef{
 				TxId: in.PrevTxId,
 				N:    in.N,
 			}
 
-			log.Infof("Processsing input %s:%d", uRef.TxId, uRef.N)
+			log.Debugf("Processsing input %s:%d", uRef.TxId, uRef.N)
 
 			uxtoBytes := uxtos.Get(uRef.Serialize())
 			if uxtoBytes == nil {
@@ -263,10 +263,10 @@ func (w *DiskWallet) ProcessTransaction(tx *core.Transaction) error {
 				return fmt.Errorf("failed to delete uxto: %w", err)
 			}
 
-			log.Infof("delete uxto: txId=%s, vout=%d", uRef.TxId, uRef.N)
+			log.Infof("Deleted uxto: txId=%s, vout=%d", uRef.TxId, uRef.N)
 		}
 
-		log.Infof("Processing outputs of transaction %s", txId)
+		log.Debugf("Processing outputs of transaction %s", txId)
 		// if output contains one of our addresses, add it
 		for i, out := range tx.Outs {
 			if addresses.Get(out.PubKeyHash[:]) != nil {
@@ -287,7 +287,7 @@ func (w *DiskWallet) ProcessTransaction(tx *core.Transaction) error {
 					return fmt.Errorf("failed to put uxto: %w", err)
 				}
 
-				log.Infof("added uxto: txId=%s, vout=%d, value=%d", uRef.TxId, uRef.N, out.Value)
+				log.Infof("Added uxto: txId=%s, vout=%d, value=%d", uRef.TxId, uRef.N, out.Value)
 			}
 		}
 
