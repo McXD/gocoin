@@ -39,18 +39,24 @@ func init() {
 	bc2, err = NewBlockchain("/tmp/test-gocoin2", "localhost", 8845)
 	shouldFail(err)
 
-	addr = core.RandomHash160()
+	_, err = bc1.DiskWallet.NewAddress()
+	shouldFail(err)
+	_, err = bc2.DiskWallet.NewAddress()
+	shouldFail(err)
 
 	// Add peers
 	err = bc1.AddPeer(bc2.Network.GetAddress())
 	shouldFail(err)
 	err = bc2.AddPeer(bc1.Network.GetAddress())
 	shouldFail(err)
+
 	// Add ten blocks to bc1
 	for i := 0; i < 10; i++ {
-		b, err := bc1.Mine(getCoinbase(), addr, BLOCK_REWARD)
+		b, err := bc1.Mine(getCoinbase(), bc1.DiskWallet.ListAddresses()[0], BLOCK_REWARD)
 		shouldFail(err)
 		err = bc1.AddBlockAsTip(b)
+		shouldFail(err)
+		err = bc1.DiskWallet.ProcessBlock(b)
 		shouldFail(err)
 	}
 
@@ -126,6 +132,31 @@ func TestHandleReorg(t *testing.T) {
 		shouldFail(err)
 		bc2.Network.BroadcastBlock(b)
 	}
+
+	time.Sleep(100 * time.Second)
+}
+
+func TestHandleTransaction(t *testing.T) {
+	currentHash, err := bc2.GetCurrentBlockHash()
+	shouldFail(err)
+
+	// sync up to the second-to-last block
+	invs := bc2.Network.GetBlocks(bc1.ID(), []core.Hash256{currentHash}, core.Hash256{})
+	blocks := bc2.Network.DownloadBlocks(bc1.ID(), invs[:len(invs)])
+	for _, b := range blocks[1:len(blocks)] {
+		err := bc2.AddBlockAsTip(b)
+		shouldFail(err)
+	}
+
+	// transfer from bc1's wallet to bc2's wallet
+	addr1 := bc1.DiskWallet.ListAddresses()[0]
+	addr2 := bc2.DiskWallet.ListAddresses()[0]
+	tx, err := bc1.DiskWallet.CreateTransaction(addr1, addr2, 1000, 10)
+	shouldFail(err)
+
+	err = bc1.ReceiveTransaction(tx)
+	shouldFail(err)
+	bc1.Network.BroadcastTx(tx)
 
 	time.Sleep(100 * time.Second)
 }

@@ -266,7 +266,7 @@ func (n *Network) DownloadBlocks(peer peer.ID, invs []Inventory) []*core.Block {
 // L ----- block ------> R
 func (n *Network) BroadcastBlock(block *core.Block, excepts ...peer.ID) {
 	log.Infof("Broadcasting block %s", block.Hash)
-	for _, p := range n.Host.Network().Peers() {
+	for _, p := range n.ListPeers() {
 		if slices.Contains(excepts, p) {
 			continue
 		}
@@ -294,9 +294,13 @@ func (n *Network) BroadcastBlock(block *core.Block, excepts ...peer.ID) {
 
 // BroadcastTx broadcasts a transaction to all peers the node currently knows of
 // L ------- tx -------> R
-func (n *Network) BroadcastTx(tx *core.Transaction) {
+func (n *Network) BroadcastTx(tx *core.Transaction, excepts ...peer.ID) {
 	log.Infof("Broadcasting tx %s", tx.Hash())
-	for _, p := range n.Host.Network().Peers() {
+	for _, p := range n.ListPeers() {
+		if slices.Contains(excepts, p) {
+			continue
+		}
+
 		s, err := n.Host.NewStream(context.Background(), p, PROTOCOL)
 		if err != nil {
 			log.Errorf("Error creating stream: %s", err)

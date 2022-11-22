@@ -32,7 +32,8 @@ type Blockchain struct {
 	*persistence.BlockIndexRepo
 	*persistence.ChainStateRepo
 	// transactions in mempool is gaurenteed be valid according to the current state, readily to be mined
-	mempool list.List
+	mempool      list.List
+	mempoolMutex sync.Mutex
 	*p2p.Network
 	// a possible new branch
 	branch      []*core.Block

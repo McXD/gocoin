@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"bufio"
+	"container/list"
 	"context"
 	"github.com/libp2p/go-libp2p/core/peer"
 	log "github.com/sirupsen/logrus"
@@ -250,21 +251,41 @@ func handleBroadcastBlock(ctx context.Context, bc *Blockchain, rw *bufio.ReadWri
 			}
 		}
 
-		bc.branchMutex.Unlock()
 		// broadcast
-		bc.Network.BroadcastBlock(block, ctx.Value("peerId").(peer.ID))
+		go bc.Network.BroadcastBlock(block, ctx.Value("peerId").(peer.ID))
 	}
+
+	bc.branchMutex.Unlock()
 }
 
-func handleBroadcastTx(ctx context.Context, bc *Blockchain, rw *bufio.ReadWriter, h p2p.Header) *core.Transaction {
+func handleBroadcastTx(ctx context.Context, bc *Blockchain, rw *bufio.ReadWriter, h p2p.Header) {
+	bc.mempoolMutex.Lock()
+
 	buf := make([]byte, h.SPayload)
 	_, err := io.ReadFull(rw, buf)
 	if err != nil {
 		log.Errorf("Error reading payload: %s", err)
-		return nil
+		return
 	}
 
 	tx := p2p.ReceiveTx(buf)
 	log.Infof("Received tx %s", tx.Hash())
-	return tx
+
+	var e *list.Element
+	for e = bc.mempool.Front(); e != nil && e.Value.(*core.Transaction).Hash() != tx.Hash(); e = e.Next() {
+	}
+	if e == nil {
+		// we don't have the tx
+		// record it and broadcast
+
+		err := bc.ReceiveTransaction(tx)
+		if err != nil {
+			log.Errorf("Error adding transaction: %s", err)
+			return
+		}
+
+		go bc.Network.BroadcastTx(tx, ctx.Value("peerId").(peer.ID))
+	}
+
+	bc.mempoolMutex.Unlock()
 }
