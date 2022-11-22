@@ -6,23 +6,29 @@ import (
 	"context"
 	"fmt"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
 	"gocoin/core"
 	"gocoin/marshal"
 	"gocoin/p2p"
 	"gocoin/persistence"
 	"gocoin/wallet"
+	"golang.org/x/exp/slices"
 	"io"
 	"math/big"
 	"sync"
+	"time"
 )
 
 const (
 	INITIAL_BITS        = 0x1e7fffff
 	GENESIS_BLOCK_TIME  = 1669004537 // updated when deployed
 	BLOCK_REWARD        = 1000
-	EXPECTED_BLOCK_TIME = 7   // seconds
-	N_BITS_ADJUSTMENT   = 100 // every 20 blocks
+	EXPECTED_BLOCK_TIME = 7  // seconds
+	P_BITS_ADJUSTMENT   = 20 // blocks
+	P_BLOCK_DOWNLOAD    = 60 // seconds
+	P_PEER_DISCOVERY    = 60 // seconds
 )
 
 type Blockchain struct {
@@ -43,7 +49,7 @@ type Blockchain struct {
 // NewBlockchain creates a new blockchain at path as root directory.
 // This method does _not_ overwrite existing blockchain state.
 // Genesis block is created hard-coded.
-func NewBlockchain(rootDir string, hostname string, port int) (*Blockchain, error) {
+func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*Blockchain, error) {
 	w, err := wallet.NewDiskWallet(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create wallet: %w", err)
@@ -63,7 +69,7 @@ func NewBlockchain(rootDir string, hostname string, port int) (*Blockchain, erro
 		return nil, fmt.Errorf("cannot get current block file id: %w", err)
 	}
 	bf, err := persistence.NewBlockFile(rootDir, bfId)
-	net, err := p2p.NewNetwork(hostname, port)
+	net, err := p2p.NewNetwork(hostname, port, randseed)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create network: %w", err)
 	}
@@ -360,21 +366,20 @@ func (bc *Blockchain) GetNBitsFor(block *core.Block) (uint32, error) {
 		return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-1, err)
 	}
 
-	if block.Height == 1 || block.Height%N_BITS_ADJUSTMENT != 1 {
+	if block.Height == 1 || block.Height%P_BITS_ADJUSTMENT != 1 {
 		return brLast.NBits, nil
 	} else {
-		brAgo, err := bc.GetBlockIndexRecordOfHeight(block.Height - N_BITS_ADJUSTMENT)
+		brAgo, err := bc.GetBlockIndexRecordOfHeight(block.Height - P_BITS_ADJUSTMENT)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-N_BITS_ADJUSTMENT, err)
+			return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-P_BITS_ADJUSTMENT, err)
 		}
 
 		duration := brLast.Time - brAgo.Time // in seconds
 		tmp := big.Int{}
 		tmp.Mul(brAgo.TargetValue(), big.NewInt(duration))
 		newTarget := big.Int{}
-		newTarget.Div(&tmp, big.NewInt(int64(N_BITS_ADJUSTMENT*EXPECTED_BLOCK_TIME)))
+		newTarget.Div(&tmp, big.NewInt(int64(P_BITS_ADJUSTMENT*EXPECTED_BLOCK_TIME)))
 
-		log.Infof("Adjusted Difficulty from %08x to %08x", brAgo.NBits, core.ParseNBits(&newTarget))
 		return core.ParseNBits(&newTarget), nil
 	}
 }
@@ -422,6 +427,125 @@ func (bc *Blockchain) handleStream(s network.Stream) {
 
 func (bc *Blockchain) StartP2PListener() {
 	bc.Network.StartListening(bc.handleStream)
+	log.Infof("Node starts listening at %s", bc.Network.GetAddress())
+}
+
+func (bc *Blockchain) StartBlockDownloads() {
+	for {
+		log.Infof("Downloading blocks...")
+
+		peers := bc.ListPeerIDs()
+
+		// what we know now
+		var knowns []core.Hash256
+		count := 10
+		blkId, err := bc.GetCurrentBlockHash()
+		if err != nil {
+			log.Errorf("Error getting tip hash: %s", err)
+		}
+		for ; count > 0; count-- {
+			knowns = append(knowns, blkId)
+
+			// get its previous block
+			rec, err := bc.BlockIndexRepo.GetBlockIndexRecord(blkId)
+			if err != nil {
+				log.Errorf("Error getting block index record: %s", err)
+				break
+			}
+
+			if rec.Height == 0 {
+				// reached genesis
+				break
+			} else {
+				blkId = rec.HashPrevBlock
+			}
+		}
+
+		// check who has the most inventory
+		var invs []p2p.Inventory
+		var targetPeer peer.ID
+		for _, p := range peers {
+			tmp := bc.Network.GetBlocks(p, knowns, core.EmptyHash256())
+			if len(tmp) > len(invs) {
+				invs = tmp
+				targetPeer = p
+			}
+		}
+
+		if len(invs) == 0 {
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		// download blocks
+		// TODO: handle forks
+		blocks := bc.Network.DownloadBlocks(targetPeer, invs[1:])
+		for _, b := range blocks {
+			err = bc.AddBlockAsTip(b)
+			if err != nil {
+				log.Errorf("Error adding block as tip: %s", err)
+				break
+			}
+		}
+
+		if len(blocks) == 0 {
+			log.Infof("Found 0 new blocks. Blockchain is update-to-date.")
+		} else {
+			tip := blocks[len(blocks)-1]
+			log.Infof("Downloaded %d. Tip is now at %s at height %d", len(blocks), tip.Hash, tip.Height)
+		}
+
+		time.Sleep(P_BLOCK_DOWNLOAD * time.Second)
+	}
+}
+
+func (bc *Blockchain) StartPeerDiscovery(seed string) {
+	if err := bc.Network.AddPeer(seed); err != nil {
+		log.Errorf("Error adding seed peer: %s", err)
+	}
+
+	for {
+		if err := bc.getPeersFrom(seed); err != nil {
+			log.Errorf("Failed to get peers from %s: %s", seed, err)
+		}
+
+		time.Sleep(P_PEER_DISCOVERY * time.Second)
+	}
+}
+
+func (bc *Blockchain) getPeersFrom(target string) error {
+	maddr, err := ma.NewMultiaddr(target)
+	if err != nil {
+		return fmt.Errorf("failed to parse multiaddr: %w", err)
+	}
+
+	info, err := peer.AddrInfoFromP2pAddr(maddr)
+	if err != nil {
+		return fmt.Errorf("failed to parse peer info: %w", err)
+	}
+
+	fetched, err := bc.Network.GetAddr(info.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get address: %w", err)
+	}
+
+	for _, addr := range fetched {
+		if slices.Contains(bc.ListKnownAddrs(), addr) {
+			continue
+		}
+
+		err := bc.Network.AddPeer(addr)
+		if err != nil {
+			return fmt.Errorf("failed to add peer: %w", err)
+		}
+
+		err = bc.getPeersFrom(addr)
+		if err != nil {
+			return fmt.Errorf("failed to get peers from %s: %w", addr, err)
+		}
+	}
+
+	return nil
 }
 
 // Reorganize the blockchain to the new active tip. The given blocks should be a series of new blocks of the longest chain.

@@ -127,6 +127,11 @@ func handleGetData(ctx context.Context, bc *Blockchain, rw *bufio.ReadWriter, h 
 	}
 	invs := p2p.ReceiveInv(buf)
 
+	if len(invs) == 0 {
+		log.Errorf("Received empty invs")
+		return
+	}
+
 	switch invs[0].TypeId {
 	case p2p.INV_TX:
 		break
@@ -215,7 +220,7 @@ func handleBroadcastBlock(ctx context.Context, bc *Blockchain, rw *bufio.ReadWri
 				bc.branch = append(bc.branch, block)
 				log.Infof("Orphan block %s has a known parent %s on active chain. Marked as possible new branch", block.Hash, block.HashPrevBlock)
 			} else if err == persistence.ErrNotFound {
-				if bc.branch[len(bc.branch)-1].Hash == block.HashPrevBlock {
+				if len(bc.branch) != 0 && bc.branch[len(bc.branch)-1].Hash == block.HashPrevBlock {
 					bc.branch = append(bc.branch, block)
 					log.Infof("Orphan block %s is the tip of new branch. Appended.", block.Hash)
 

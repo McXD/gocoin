@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"flag"
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"gocoin/blockchain"
@@ -53,42 +54,71 @@ func init() {
 // run a gocoin node
 func main() {
 	greeting()
-	cleanup()
-	initDirs()
 
-	bc, err := blockchain.NewBlockchain("/tmp/gocoin", "localhost", 8844)
+	// parse command line arguments
+	mFlag := flag.Bool("m", false, "enable mining")
+	rootFlag := flag.String("root", "/tmp/gocoin", "root directory")
+	cFlag := flag.Bool("c", false, "clean up")
+	p2pHostName := flag.String("p2p-host", "localhost", "p2p host name")
+	p2pPort := flag.Int("p2p-port", 8844, "p2p port")
+	rpcPort := flag.Int("rpc-port", 8080, "rpc port")
+	seedFlag := flag.String("seed", "", "seed node multi-address")
+	randSeed := flag.Int64("rand-seed", 0, "random seed")
 
-	err = initWallet(bc.DiskWallet)
-	if err != nil {
-		debug.PrintStack()
-		panic(err)
+	flag.Parse()
+
+	if *cFlag {
+		cleanup(*rootFlag)
+		initDirs(*rootFlag)
 	}
-	miningAddr := bc.DiskWallet.ListAddresses()[0]
 
-	go startRPC(8080, bc)
-
-	for {
-		var timestamp [10]byte
-		binary.PutVarint(timestamp[:], time.Now().UnixNano())
-		coinbase := append(timestamp[:], []byte("coinbase")...)
-		b, err := bc.Mine(coinbase, miningAddr, blockchain.BLOCK_REWARD)
-		if err != nil {
-			debug.PrintStack()
-			panic(err)
-		}
-
-		err = bc.AddBlockAsTip(b)
-		if err != nil {
-			debug.PrintStack()
-			panic(err)
-		}
-
-		err = bc.DiskWallet.ProcessBlock(b)
-		if err != nil {
-			debug.PrintStack()
-			panic(err)
-		}
+	bc, err := blockchain.NewBlockchain(*rootFlag, *p2pHostName, *p2pPort, *randSeed)
+	shouldPanic(err)
+	if *cFlag {
+		err = initWallet(bc.DiskWallet)
+		shouldPanic(err)
 	}
+
+	// start up servers
+	go startRPC(*rpcPort, bc)
+	go bc.StartP2PListener()
+
+	// periodically discover peers
+	if *seedFlag != "" {
+		go bc.StartPeerDiscovery(*seedFlag)
+	}
+
+	if *mFlag {
+		// start mining
+		log.Infof("Start mining...")
+		miningAddr := bc.DiskWallet.ListAddresses()[0]
+
+		for {
+			var timestamp [10]byte
+			binary.PutVarint(timestamp[:], time.Now().UnixNano())
+			coinbase := append(timestamp[:], []byte("coinbase")...)
+			b, err := bc.Mine(coinbase, miningAddr, blockchain.BLOCK_REWARD)
+
+			err = bc.AddBlockAsTip(b)
+			if err != nil {
+				debug.PrintStack()
+				panic(err)
+			}
+
+			go bc.Network.BroadcastBlock(b)
+
+			err = bc.DiskWallet.ProcessBlock(b)
+			if err != nil {
+				debug.PrintStack()
+				panic(err)
+			}
+		}
+	} else {
+		// periodically download blocks
+		go bc.StartBlockDownloads()
+	}
+
+	time.Sleep(10000 * time.Second)
 }
 
 func startRPC(port int, bc *blockchain.Blockchain) {
@@ -100,10 +130,10 @@ func startRPC(port int, bc *blockchain.Blockchain) {
 	}
 }
 
-func initDirs() {
-	err := os.Mkdir("/tmp/gocoin", 0777)
-	err = os.Mkdir("/tmp/gocoin/data", 0777)
-	err = os.Mkdir("/tmp/gocoin/db", 0777)
+func initDirs(rootDir string) {
+	err := os.Mkdir(rootDir, 0777)
+	err = os.Mkdir(rootDir+"/data", 0777)
+	err = os.Mkdir(rootDir+"/db", 0777)
 
 	if err != nil {
 		debug.PrintStack()
@@ -123,8 +153,13 @@ func initWallet(w *wallet.DiskWallet) error {
 	return nil
 }
 
-func cleanup() {
-	err := os.RemoveAll("/tmp/gocoin")
+func cleanup(rootDir string) {
+	err := os.RemoveAll(rootDir)
+	shouldPanic(err)
+
+}
+
+func shouldPanic(err error) {
 	if err != nil {
 		debug.PrintStack()
 		panic(err)

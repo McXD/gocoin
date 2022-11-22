@@ -25,10 +25,10 @@ type Network struct {
 	host.Host
 }
 
-func NewNetwork(hostname string, port int) (*Network, error) {
+func NewNetwork(hostname string, port int, randseed int64) (*Network, error) {
 	n := &Network{Host: nil}
 
-	basicHost, err := makeBasicHost(hostname, port, true, 0)
+	basicHost, err := makeBasicHost(hostname, port, true, randseed)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (n *Network) AddPeer(targetPeer string) error {
 	return nil
 }
 
-func (n *Network) ListPeers() []peer.ID {
+func (n *Network) ListPeerIDs() []peer.ID {
 	ret := make([]peer.ID, 0)
 	store := n.Host.Peerstore()
 	for _, id := range store.Peers() {
@@ -266,7 +266,7 @@ func (n *Network) DownloadBlocks(peer peer.ID, invs []Inventory) []*core.Block {
 // L ----- block ------> R
 func (n *Network) BroadcastBlock(block *core.Block, excepts ...peer.ID) {
 	log.Infof("Broadcasting block %s", block.Hash)
-	for _, p := range n.ListPeers() {
+	for _, p := range n.ListPeerIDs() {
 		if slices.Contains(excepts, p) {
 			continue
 		}
@@ -296,7 +296,7 @@ func (n *Network) BroadcastBlock(block *core.Block, excepts ...peer.ID) {
 // L ------- tx -------> R
 func (n *Network) BroadcastTx(tx *core.Transaction, excepts ...peer.ID) {
 	log.Infof("Broadcasting tx %s", tx.Hash())
-	for _, p := range n.ListPeers() {
+	for _, p := range n.ListPeerIDs() {
 		if slices.Contains(excepts, p) {
 			continue
 		}

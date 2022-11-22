@@ -34,9 +34,9 @@ func init() {
 		shouldFail(err)
 	}
 
-	bc1, err = NewBlockchain("/tmp/test-gocoin1", "localhost", 8844)
+	bc1, err = NewBlockchain("/tmp/test-gocoin1", "localhost", 8844, 0)
 	shouldFail(err)
-	bc2, err = NewBlockchain("/tmp/test-gocoin2", "localhost", 8845)
+	bc2, err = NewBlockchain("/tmp/test-gocoin2", "localhost", 8845, 0)
 	shouldFail(err)
 
 	_, err = bc1.DiskWallet.NewAddress()

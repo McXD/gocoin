@@ -136,6 +136,9 @@ func (b *BlockchainController) SendFrom(c *gin.Context) {
 		return
 	}
 
+	// broadcast
+	go b.BroadcastTx(transaction)
+
 	c.JSON(http.StatusOK, gin.H{
 		"txId": transaction.Hash().String(),
 	})

@@ -6,12 +6,12 @@ import (
 )
 
 func TestNewNetwork(t *testing.T) {
-	n1, err := NewNetwork("localhost", 8844)
+	n1, err := NewNetwork("localhost", 8844, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	n2, err := NewNetwork("localhost", 8845)
+	n2, err := NewNetwork("localhost", 8845, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,19 +32,19 @@ func TestNewNetwork(t *testing.T) {
 
 	spew.Dump(n1.ListKnownAddrs())
 
-	if len(n1.ListPeers()) != 1 {
+	if len(n1.ListPeerIDs()) != 1 {
 		t.Error("n1 should have 1 peer")
 	}
 
-	if len(n2.ListPeers()) != 1 {
+	if len(n2.ListPeerIDs()) != 1 {
 		t.Error("n1 should have 1 peer")
 	}
 }
 
 func TestNetwork_GetAddr(t *testing.T) {
-	n1, _ := NewNetwork("localhost", 8844)
-	n2, _ := NewNetwork("localhost", 8845)
-	n3, _ := NewNetwork("localhost", 8846)
+	n1, _ := NewNetwork("localhost", 8844, 0)
+	n2, _ := NewNetwork("localhost", 8845, 0)
+	n3, _ := NewNetwork("localhost", 8846, 0)
 
 	// n2 <-> n1 <-> n3
 	_ = n1.AddPeer(n2.GetAddress())
@@ -52,11 +52,11 @@ func TestNetwork_GetAddr(t *testing.T) {
 	_ = n2.AddPeer(n1.GetAddress())
 	_ = n3.AddPeer(n1.GetAddress())
 
-	n1.StartListening()
+	n1.StartListening(nil)
 	ch := make(chan bool)
 
 	go func() {
-		addr, err := n2.GetAddr(n2.ListPeers()[0])
+		addr, err := n2.GetAddr(n2.ListPeerIDs()[0])
 		if err != nil {
 			t.Error(err)
 		}
