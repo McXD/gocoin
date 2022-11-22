@@ -1,8 +1,11 @@
 package controllers
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
 	"github.com/gin-gonic/gin"
+	log "github.com/sirupsen/logrus"
 	"gocoin/blockchain"
 	"gocoin/core"
 	"gocoin/marshal"
@@ -142,4 +145,62 @@ func (b *BlockchainController) SendFrom(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"txId": transaction.Hash().String(),
 	})
+}
+
+type MiningCtxDTO struct {
+	MinerAddress string `json:"minerAddress"`
+	PrevHash     string `json:"prevHash"`
+}
+
+// GetMiningContext returns the mining context.
+// GET /blockchain/miningContext
+func (b *BlockchainController) GetMiningContext(c *gin.Context) {
+	b.MingCtxMutex.Lock()
+	addr, ok1 := b.MiningCtx.Value(blockchain.CTX_ADDRESS).(core.Hash160)
+	prevHash, ok2 := b.MiningCtx.Value(blockchain.CTX_PREV_HASH).(core.Hash256)
+	b.MingCtxMutex.Unlock()
+
+	if !ok1 || !ok2 {
+		SendError(c, http.StatusInternalServerError, errors.New("invalid mining context"))
+		return
+	}
+
+	c.JSON(http.StatusOK, MiningCtxDTO{
+		MinerAddress: addr.String(),
+		PrevHash:     prevHash.String(),
+	})
+}
+
+// SetMiningContext sets the mining context (for next block mined)
+// POST /blockchain/miningContext
+func (b *BlockchainController) SetMiningContext(c *gin.Context) {
+	var form MiningCtxDTO
+	if err := c.ShouldBindJSON(&form); err != nil {
+		SendError(c, http.StatusBadRequest, err)
+		return
+	}
+
+	// async call
+	go func() {
+		b.MingCtxMutex.Lock()
+		defer b.MingCtxMutex.Unlock()
+		if form.MinerAddress != "" {
+			addr := core.Hash160{}
+			err := addr.ParseAddress(form.MinerAddress)
+			if err != nil {
+				SendError(c, http.StatusBadRequest, err)
+			}
+			b.MiningCtx = context.WithValue(b.MiningCtx, blockchain.CTX_ADDRESS, addr)
+			log.Infof("mining context: miner address set to %s", addr.String())
+		}
+
+		if form.PrevHash != "" {
+			prevHash, err := core.ParseHash256(form.PrevHash)
+			if err != nil {
+				SendError(c, http.StatusBadRequest, err)
+			}
+			b.MiningCtx = context.WithValue(b.MiningCtx, blockchain.CTX_PREV_HASH, prevHash)
+			log.Infof("mining context: prev hash set to %s", prevHash.String())
+		}
+	}()
 }

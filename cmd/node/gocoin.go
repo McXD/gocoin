@@ -56,9 +56,9 @@ func main() {
 	greeting()
 
 	// parse command line arguments
-	mFlag := flag.Bool("m", false, "enable mining")
+	mFlag := flag.Bool("m", true, "enable mining")
 	rootFlag := flag.String("root", "/tmp/gocoin", "root directory")
-	cFlag := flag.Bool("c", false, "clean up")
+	cFlag := flag.Bool("c", true, "clean up")
 	p2pHostName := flag.String("p2p-host", "localhost", "p2p host name")
 	p2pPort := flag.Int("p2p-port", 8844, "p2p port")
 	rpcPort := flag.Int("rpc-port", 8080, "rpc port")
@@ -91,27 +91,18 @@ func main() {
 	if *mFlag {
 		// start mining
 		log.Infof("Start mining...")
-		miningAddr := bc.DiskWallet.ListAddresses()[0]
 
 		for {
 			var timestamp [10]byte
 			binary.PutVarint(timestamp[:], time.Now().UnixNano())
 			coinbase := append(timestamp[:], []byte("coinbase")...)
-			b, err := bc.Mine(coinbase, miningAddr, blockchain.BLOCK_REWARD)
+			b, err := bc.Mine(coinbase, blockchain.BLOCK_REWARD)
+			shouldPanic(err)
 
 			err = bc.AddBlockAsTip(b)
-			if err != nil {
-				debug.PrintStack()
-				panic(err)
-			}
+			shouldPanic(err)
 
 			go bc.Network.BroadcastBlock(b)
-
-			err = bc.DiskWallet.ProcessBlock(b)
-			if err != nil {
-				debug.PrintStack()
-				panic(err)
-			}
 		}
 	} else {
 		// periodically download blocks
@@ -142,8 +133,8 @@ func initDirs(rootDir string) {
 }
 
 func initWallet(w *wallet.DiskWallet) error {
-	// create 5 additional addresses
-	for i := 0; i < 5; i++ {
+	// create 4 additional addresses
+	for i := 0; i < 4; i++ {
 		_, err := w.NewAddress()
 		if err != nil {
 			return err

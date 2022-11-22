@@ -29,6 +29,8 @@ const (
 	P_BITS_ADJUSTMENT   = 20 // blocks
 	P_BLOCK_DOWNLOAD    = 60 // seconds
 	P_PEER_DISCOVERY    = 60 // seconds
+	CTX_ADDRESS         = "address"
+	CTX_PREV_HASH       = "prev_hash"
 )
 
 type Blockchain struct {
@@ -44,6 +46,12 @@ type Blockchain struct {
 	// a possible new branch
 	branch      []*core.Block
 	branchMutex sync.Mutex
+	// handlers
+	addBlockHandlers []func(*core.Block)
+	reorgHandlers    []func([]*core.UXTO)
+	// contexts
+	MiningCtx    context.Context
+	MingCtxMutex sync.Mutex
 }
 
 // NewBlockchain creates a new blockchain at path as root directory.
@@ -83,10 +91,28 @@ func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*
 		Network:        net,
 	}
 
-	err = b.AddBlockAsTip(makeGenesisBlock())
+	// create genesis
+	genesis := makeGenesisBlock()
+	err = b.AddBlockAsTip(genesis)
 	if err != nil {
 		return nil, fmt.Errorf("cannot add genesis block: %w", err)
 	}
+
+	// initialize wallet
+	// add one address
+	addr1, err := b.DiskWallet.NewAddress()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate address: %w", err)
+	}
+
+	// register hooks
+	b.RegisterAddBlockHandler(b.DiskWallet.ProcessBlock)
+	b.RegisterReorgHandler(b.DiskWallet.RollBack)
+
+	// set initial contexts
+	b.MiningCtx = context.Background()
+	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_ADDRESS, addr1)
+	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_PREV_HASH, genesis.Hash)
 
 	return &b, nil
 }
@@ -111,31 +137,26 @@ func makeGenesisBlock() *core.Block {
 // 1. The block is max 1 MB in size
 // 2. The block must contain at least one coinbase transaction
 // 3. Transactions with higher fees are preferred
-func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward uint32) (*core.Block, error) {
-	log.Debugf("Start preparing a block")
-
-	currentBlockHash, err := bc.ChainStateRepo.GetCurrentBlockHash()
-	if err == persistence.ErrNotFound { // first block
-		currentBlockHash = core.EmptyHash256()
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to get current block hash: %w", err)
+func (bc *Blockchain) Mine(coinbase []byte, reward uint32) (*core.Block, error) {
+	// get values from context
+	bc.MingCtxMutex.Lock()
+	defer bc.MingCtxMutex.Unlock()
+	addr, ok := bc.MiningCtx.Value(CTX_ADDRESS).(core.Hash160)
+	if !ok {
+		return nil, fmt.Errorf("failed to get address from context")
 	}
-	log.Debugf("Prev block hash: %s", currentBlockHash.String())
+	prevHash, ok := bc.MiningCtx.Value(CTX_PREV_HASH).(core.Hash256)
+	if !ok {
+		return nil, fmt.Errorf("failed to get prev hash from context")
+	}
 
-	currentBlockIndex, err := bc.GetBlockIndexRecord(currentBlockHash)
-	if err == persistence.ErrNotFound && currentBlockHash == core.EmptyHash256() { // genesis block
-		currentBlockIndex = &persistence.BlockIndexRecord{
-			BlockHeader: core.BlockHeader{
-				NBits: INITIAL_BITS, // TODO: initial difficulty
-			},
-			Height: 4294967295, // -1
-		}
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to get block %x: %w", currentBlockHash[:], err)
+	prevBlockIndex, err := bc.GetBlockIndexRecord(prevHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get block index record %s: %w", (prevHash).String(), err)
 	}
 
 	bb := core.NewBlockBuilder()
-	bb.BaseOn(currentBlockHash, currentBlockIndex.Height)
+	bb.BaseOn(prevHash, prevBlockIndex.Height)
 	nBits, err := bc.GetNBitsFor(bb.Block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get nBits for block: %w", err)
@@ -153,24 +174,25 @@ func (bc *Blockchain) Mine(coinbase []byte, minerAddress core.Hash160, reward ui
 		txFee += fee
 		blkSize += len(marshal.Transaction(tx))
 
-		log.Debugf("Selected transaction for mining: hash=%s, fee=%d", tx.Hash(), fee)
+		log.Info("Selected transaction for mining from mempool: hash=%s, fee=%d", tx.Hash(), fee)
 
 		if blkSize > 10*1024 { // size of a single block is less 10 KB
 			break
 		}
 	}
 
-	coinbaseTx := core.NewCoinBaseTransaction(coinbase, minerAddress, reward, txFee)
+	coinbaseTx := core.NewCoinBaseTransaction(coinbase, addr, reward, txFee)
 	txs = append([]*core.Transaction{coinbaseTx}, txs...) // prepend coinbase transaction
 
 	for _, tx := range txs {
 		bb.AddTransaction(tx)
 	}
 
-	log.Debugf("Start mining block: prevBlockHash=%s, height=%d, difficulty=%08x", bb.HashPrevBlock.String(), bb.Height, bb.NBits)
+	log.Infof("Start mining block: prevBlockHash=%s, height=%d, difficulty=%08x", bb.HashPrevBlock.String(), bb.Height, bb.NBits)
 	b := bb.Build()
 	log.Infof("***Mined a block***: hash: %s, prevBlockHash=%s, height=%d, difficulty=%08x", b.Hash.String(), bb.HashPrevBlock.String(), bb.Height, bb.NBits)
 
+	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HASH, b.Hash)
 	return b, nil
 }
 
@@ -353,6 +375,12 @@ func (bc *Blockchain) AddBlockAsTip(block *core.Block) error {
 	}
 
 	log.Infof("Blockchain tip changes to: %s, height=%d", block.Hash, block.Height)
+
+	// call handlers
+	for _, handler := range bc.addBlockHandlers {
+		handler(block)
+	}
+
 	return nil
 }
 
@@ -578,6 +606,10 @@ func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 			}
 		}
 
+		for _, handler := range bc.reorgHandlers {
+			handler(tipRev)
+		}
+
 		err = bc.BlockIndexRepo.DeleteBlockIndexRecord(tipHash)
 		if err != nil {
 			return fmt.Errorf("failed to delete block index record of %s: %w", tipHash, err)
@@ -603,4 +635,12 @@ func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 	}
 
 	return nil
+}
+
+func (bc *Blockchain) RegisterAddBlockHandler(handler func(*core.Block)) {
+	bc.addBlockHandlers = append(bc.addBlockHandlers, handler)
+}
+
+func (bc *Blockchain) RegisterReorgHandler(handler func([]*core.UXTO)) {
+	bc.reorgHandlers = append(bc.reorgHandlers, handler)
 }

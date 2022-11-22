@@ -25,6 +25,8 @@ func NewRouter(bc *blockchain.Blockchain) *gin.Engine {
 		DiskWallet: bc.DiskWallet,
 	}
 
+	router.GET("/blockchain/miningContext", bcController.GetMiningContext)
+	router.POST("/blockchain/miningContext", bcController.SetMiningContext)
 	router.GET("/blockchain/transactions", bcController.GetTransaction)
 	router.GET("/wallet/info", wallet.GetWalletInfo)
 	router.GET("/wallet/newAddress", wallet.GetNewAddress)

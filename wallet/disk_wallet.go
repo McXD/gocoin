@@ -304,12 +304,33 @@ func (w *DiskWallet) ProcessTransaction(tx *core.Transaction) error {
 	return err
 }
 
-func (w *DiskWallet) ProcessBlock(block *core.Block) error {
+func (w *DiskWallet) ProcessBlock(block *core.Block) {
 	for _, tx := range block.Transactions {
 		if err := w.ProcessTransaction(tx); err != nil {
-			return fmt.Errorf("failed to process transaction %s: %w", tx.Hash(), err)
+			log.Errorf("Failed to process transaction %s: %v", tx.Hash(), err)
 		}
 	}
+}
 
-	return nil
+func (w *DiskWallet) RollBack(uxtos []*core.UXTO) {
+	err := w.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("uxtos"))
+
+		for _, uxto := range uxtos {
+			uRef := persistence.UXTORef{
+				TxId: uxto.TxId,
+				N:    uxto.N,
+			}
+
+			if err := b.Put(uRef.Serialize(), marshal.SerializeUXTO(uxto)); err != nil {
+				return fmt.Errorf("failed to put uxto: %w", err)
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		log.Errorf("Failed to rollback: %v", err)
+	}
 }
