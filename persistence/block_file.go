@@ -28,8 +28,8 @@ type BlockFile struct {
 	undoFileSize int
 	bf           *os.File
 	rf           *os.File
-	revs         [][]*core.UXTO
-	blocks       []*core.Block // in-memory cache
+	Revs         [][]*core.UXTO
+	Blocks       []*core.Block // in-memory cache
 }
 
 // NewBlockFile creates or opens a block file and the corresponding rev file
@@ -51,8 +51,8 @@ func NewBlockFile(rootDir string, id uint32) (*BlockFile, error) {
 		undoFileSize: 0,
 		bf:           bf,
 		rf:           rf,
-		blocks:       make([]*core.Block, 0),
-		revs:         make([][]*core.UXTO, 0),
+		Blocks:       make([]*core.Block, 0),
+		Revs:         make([][]*core.UXTO, 0),
 	}
 
 	var buf [100_000]byte
@@ -70,7 +70,7 @@ func NewBlockFile(rootDir string, id uint32) (*BlockFile, error) {
 
 		for i, slice := range slices {
 			if i != len(slices)-1 { // last slice may be incomplete
-				blockFile.blocks = append(blockFile.blocks, marshal.UBlock(slice))
+				blockFile.Blocks = append(blockFile.Blocks, marshal.UBlock(slice))
 				pos += int64(len(slice))
 			}
 
@@ -94,9 +94,9 @@ func NewBlockFile(rootDir string, id uint32) (*BlockFile, error) {
 		for i, uxtos := range blockUXTOs {
 			if i != len(blockUXTOs)-1 { // discard the last one
 				count := len(uxtos) / S_UXTO
-				blockFile.revs = append(blockFile.revs, []*core.UXTO{}) // initialize the slice
+				blockFile.Revs = append(blockFile.Revs, []*core.UXTO{}) // initialize the slice
 				for j := 0; j < count; j++ {
-					blockFile.revs[i] = append(blockFile.revs[i], marshal.DeserializeUXTO(uxtos[S_UXTO*j:S_UXTO+S_UXTO*j]))
+					blockFile.Revs[i] = append(blockFile.Revs[i], marshal.DeserializeUXTO(uxtos[S_UXTO*j:S_UXTO+S_UXTO*j]))
 					pos += S_UXTO
 				}
 				pos += 8 // separator
@@ -125,8 +125,8 @@ func (blockFile *BlockFile) WriteBlock(b *core.Block, uxtos []*core.UXTO) error 
 	}
 	blockFile.undoFileSize += len(uxtoData)
 
-	blockFile.blocks = append(blockFile.blocks, b)
-	blockFile.revs = append(blockFile.revs, uxtos)
+	blockFile.Blocks = append(blockFile.Blocks, b)
+	blockFile.Revs = append(blockFile.Revs, uxtos)
 	return nil
 }
 
@@ -143,7 +143,7 @@ func (blockFile *BlockFile) GetUndoFileSize() int {
 }
 
 func (blockFile *BlockFile) GetBlockCount() int {
-	return len(blockFile.blocks)
+	return len(blockFile.Blocks)
 }
 
 func GetBlock(rootDir string, blkRec BlockIndexRecord) (*core.Block, error) {
@@ -154,7 +154,7 @@ func GetBlock(rootDir string, blkRec BlockIndexRecord) (*core.Block, error) {
 		return nil, fmt.Errorf("cannot open block file: %w", err)
 	}
 
-	return bf.blocks[blkRec.Offset], nil
+	return bf.Blocks[blkRec.Offset], nil
 }
 
 func GetTransaction(rootDir string, txRec *TransactionRecord) (*core.Transaction, error) {
@@ -164,7 +164,7 @@ func GetTransaction(rootDir string, txRec *TransactionRecord) (*core.Transaction
 		return nil, fmt.Errorf("cannot open block file: %w", err)
 	}
 
-	tx := bf.blocks[txRec.BlockOffset].Transactions[txRec.TxOffset]
+	tx := bf.Blocks[txRec.BlockOffset].Transactions[txRec.TxOffset]
 
 	return tx, nil
 }

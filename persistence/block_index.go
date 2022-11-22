@@ -209,6 +209,16 @@ func (repo *BlockIndexRepo) PutBlockIndexRecord(blkId core.Hash256, r *BlockInde
 	return err
 }
 
+func (repo *BlockIndexRepo) DeleteBlockIndexRecord(blkId core.Hash256) error {
+	err := repo.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("b"))
+		err := b.Delete(blkId[:])
+		return err
+	})
+
+	return err
+}
+
 func (repo *BlockIndexRepo) GetBlockIndexRecord(blkId core.Hash256) (*BlockIndexRecord, error) {
 	var tr *BlockIndexRecord
 

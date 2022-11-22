@@ -56,7 +56,8 @@ func UBlockHeader(buf []byte) *core.BlockHeader {
 func Block(block *core.Block) []byte {
 	var buf []byte
 
-	buf = append(buf, BlockHeader(&block.BlockHeader)...)     // Header, 77
+	buf = append(buf, Uint32ToBytes(block.Height)...)         // Height, 4
+	buf = append(buf, BlockHeader(&block.BlockHeader)...)     // Header, 80
 	buf = append(buf, IntToBytes(len(block.Transactions))...) // Tx GetBlockFileSize, 8
 
 	for _, tx := range block.Transactions {
@@ -83,9 +84,12 @@ func UBlock(buf []byte) *core.Block {
 	}
 
 	p := 0
-	block.BlockHeader = *UBlockHeader(buf[:77])
+	block.Height = Uint32FromBytes(buf[:4])
 
-	p += 77
+	p += 4
+	block.BlockHeader = *UBlockHeader(buf[p : p+S_BLOCKHEADER])
+
+	p += S_BLOCKHEADER
 	txCount := IntFromBytes(buf[p : p+8])
 
 	p += 8
@@ -94,5 +98,6 @@ func UBlock(buf []byte) *core.Block {
 		block.Transactions = append(block.Transactions, UTransaction(txs[i]))
 	}
 
+	block.Hash = block.BlockHeader.Hash()
 	return block
 }

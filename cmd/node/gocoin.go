@@ -56,7 +56,7 @@ func main() {
 	cleanup()
 	initDirs()
 
-	bc, err := blockchain.NewBlockchain("/tmp/gocoin")
+	bc, err := blockchain.NewBlockchain("/tmp/gocoin", "localhost", 8844)
 
 	err = initWallet(bc.DiskWallet)
 	if err != nil {
@@ -77,7 +77,7 @@ func main() {
 			panic(err)
 		}
 
-		err = bc.AddBlock(b)
+		err = bc.AddBlockAsTip(b)
 		if err != nil {
 			debug.PrintStack()
 			panic(err)

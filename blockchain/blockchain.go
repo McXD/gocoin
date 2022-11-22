@@ -1,21 +1,28 @@
 package blockchain
 
 import (
+	"bufio"
 	"container/list"
+	"context"
 	"fmt"
+	"github.com/libp2p/go-libp2p/core/network"
 	log "github.com/sirupsen/logrus"
 	"gocoin/core"
 	"gocoin/marshal"
+	"gocoin/p2p"
 	"gocoin/persistence"
 	"gocoin/wallet"
+	"io"
 	"math/big"
+	"sync"
 )
 
 const (
 	INITIAL_BITS        = 0x1e7fffff
+	GENESIS_BLOCK_TIME  = 1669004537 // updated when deployed
 	BLOCK_REWARD        = 1000
-	EXPECTED_BLOCK_TIME = 7  // seconds
-	N_BITS_ADJUSTMENT   = 20 // every 20 blocks
+	EXPECTED_BLOCK_TIME = 7   // seconds
+	N_BITS_ADJUSTMENT   = 100 // every 20 blocks
 )
 
 type Blockchain struct {
@@ -26,11 +33,16 @@ type Blockchain struct {
 	*persistence.ChainStateRepo
 	// transactions in mempool is gaurenteed be valid according to the current state, readily to be mined
 	mempool list.List
+	*p2p.Network
+	// a possible new branch
+	branch      []*core.Block
+	branchMutex sync.Mutex
 }
 
 // NewBlockchain creates a new blockchain at path as root directory.
 // This method does _not_ overwrite existing blockchain state.
-func NewBlockchain(rootDir string) (*Blockchain, error) {
+// Genesis block is created hard-coded.
+func NewBlockchain(rootDir string, hostname string, port int) (*Blockchain, error) {
 	w, err := wallet.NewDiskWallet(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create wallet: %w", err)
@@ -50,6 +62,10 @@ func NewBlockchain(rootDir string) (*Blockchain, error) {
 		return nil, fmt.Errorf("cannot get current block file id: %w", err)
 	}
 	bf, err := persistence.NewBlockFile(rootDir, bfId)
+	net, err := p2p.NewNetwork(hostname, port)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create network: %w", err)
+	}
 
 	b := Blockchain{
 		RootDir:        rootDir,
@@ -57,9 +73,31 @@ func NewBlockchain(rootDir string) (*Blockchain, error) {
 		BlockFile:      bf,
 		BlockIndexRepo: bi,
 		ChainStateRepo: cs,
+		Network:        net,
+	}
+
+	err = b.AddBlockAsTip(makeGenesisBlock())
+	if err != nil {
+		return nil, fmt.Errorf("cannot add genesis block: %w", err)
 	}
 
 	return &b, nil
+}
+
+func makeGenesisBlock() *core.Block {
+	// TODO: hardcode the genesis block, instead of build it (which may lead to non-deterministic genesis block)
+	coinbase := core.NewCoinBaseTransaction([]byte("genesis"), core.Hash160{}, BLOCK_REWARD, 0)
+	bb := core.NewBlockBuilder()
+	bb.BaseOn(core.Hash256{}, 4294967295)
+	bb.AddTransaction(coinbase)
+	bb.NBits = INITIAL_BITS
+	bb.Time = GENESIS_BLOCK_TIME
+	bb.Nonce = 28980
+	mkRoot, _ := bb.CalculateMerkleRoot()
+	bb.HashMerkleRoot = mkRoot
+	bb.Hash = bb.BlockHeader.Hash()
+
+	return bb.Block
 }
 
 // Mine a block. Transaction selection is based on the following rules:
@@ -163,12 +201,24 @@ func (bc *Blockchain) ReceiveTransaction(tx *core.Transaction) error {
 	return nil
 }
 
-// AddBlock to the active tip. The block must be valid according to the current state.
-func (bc *Blockchain) AddBlock(block *core.Block) error {
+func (bc *Blockchain) VerifyBlock(block *core.Block) error {
+	nBits, err := bc.GetNBitsFor(block)
+	if err != nil {
+		return fmt.Errorf("failed to get nBits for block %d: %w", block.Height, err)
+	}
+	if err := block.Verify(bc.ChainStateRepo, nBits, 500, BLOCK_REWARD); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// AddBlockAsTip add the block as the active tip. The block must be valid according to the current state.
+func (bc *Blockchain) AddBlockAsTip(block *core.Block) error {
 	prevBlockIndex, err := bc.GetBlockIndexRecord(block.HashPrevBlock)
 	if err == persistence.ErrNotFound {
 		if block.HashPrevBlock != core.EmptyHash256() {
-			return fmt.Errorf("failed to get previous block %s: %w", prevBlockIndex.Hash(), err)
+			return fmt.Errorf("failed to get previous block %s: %w", block.HashPrevBlock, err)
 		} else { // genesis block
 			prevBlockIndex = &persistence.BlockIndexRecord{
 				BlockHeader: core.BlockHeader{
@@ -181,16 +231,23 @@ func (bc *Blockchain) AddBlock(block *core.Block) error {
 		return fmt.Errorf("failed to get previous block %s: %w", prevBlockIndex.Hash(), err)
 	}
 
-	var spent []*core.UXTO
-	nBits, err := bc.GetNBitsFor(block)
-	if err != nil {
-		return fmt.Errorf("failed to get nBits for block %d: %w", block.Height, err)
+	// verify height and prev block hash
+	if block.Height != prevBlockIndex.Height+1 {
+		return fmt.Errorf("invalid block height: expected %d, got %d", prevBlockIndex.Height+1, block.Height)
+	} else {
+		if block.Height != 0 { // not genesis block
+			if block.HashPrevBlock != prevBlockIndex.Hash() {
+				return fmt.Errorf("invalid block prev hash: expected %s, got %s", prevBlockIndex.Hash(), block.HashPrevBlock)
+			}
+		}
 	}
-	if err := block.Verify(bc.ChainStateRepo, nBits, 500, BLOCK_REWARD); err != nil {
-		return fmt.Errorf("failed to verify block: %w", err)
+
+	if err := bc.VerifyBlock(block); err != nil {
+		return fmt.Errorf("failed to verify block %s: %w", block.Hash.String(), err)
 	}
 
 	// update chain state
+	var spent []*core.UXTO
 	for _, tx := range block.Transactions {
 		// process spent UXTOs
 		for _, input := range tx.Ins {
@@ -321,8 +378,104 @@ func (bc *Blockchain) GetNBitsFor(block *core.Block) (uint32, error) {
 	}
 }
 
+// For each connection, read the header and delegates to the proper handler
+func (bc *Blockchain) handleStream(s network.Stream) {
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "addr", p2p.FullMultiAddr(s.Conn().RemoteMultiaddr(), s.Conn().RemotePeer()))
+	ctx = context.WithValue(ctx, "peerId", s.Conn().RemotePeer())
+	log.Infof("Established connection with %s", ctx.Value("addr"))
+
+	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
+
+	buf := make([]byte, p2p.S_HEADER)
+	_, err := io.ReadFull(rw, buf)
+	if err != nil {
+		log.Errorf("Error reading header: %s", err)
+		return
+	}
+	h := p2p.ReceiveHeader(buf)
+
+	switch h.Command {
+	case p2p.CMD_GETADDR:
+		handleGetAddr(ctx, bc, rw, h)
+		break
+	case p2p.CMD_GETBLOCKS:
+		handleGetBlocks(ctx, bc, rw, h)
+		break
+	case p2p.CMD_GETDATA:
+		handleGetData(ctx, bc, rw, h)
+		break
+	case p2p.CMD_TX:
+		handleBroadcastTx(ctx, bc, rw, h)
+		break
+	case p2p.CMD_BLOCK:
+		handleBroadcastBlock(ctx, bc, rw, h)
+		break
+	}
+
+	err = s.Close()
+	if err != nil {
+		log.Errorf("Error closing stream: %s", err)
+	}
+}
+
+func (bc *Blockchain) StartP2PListener() {
+	bc.Network.StartListening(bc.handleStream)
+}
+
 // Reorganize the blockchain to the new active tip. The given blocks should be a series of new blocks of the longest chain.
+// The first one in the list should be the branch point, and the last one should be the new tip.
 // After reorganization, the mempool is cleared.
 func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
+	// TODO: Mark the records as stale instead of deleting them
+	// TODO: or else we will never find these blocks again
+	tipHash, err := bc.GetCurrentBlockHash()
+	if err != nil {
+		return fmt.Errorf("failed to get current block hash: %w", err)
+	}
+
+	for {
+		tipRec, err := bc.GetBlockIndexRecord(tipHash)
+		if err != nil {
+			return fmt.Errorf("failed to get block index record of %s: %w", tipHash, err)
+		}
+
+		tipFile, err := persistence.NewBlockFile(bc.RootDir, tipRec.BlockFileID)
+		if err != nil {
+			return fmt.Errorf("failed to open block file %d: %w", tipRec.BlockFileID, err)
+		}
+
+		tipRev := tipFile.Revs[tipRec.Offset]
+		for _, u := range tipRev {
+			err = bc.ChainStateRepo.PutUXTO(u)
+			if err != nil {
+				return fmt.Errorf("failed to put uxto: %w", err)
+			}
+		}
+
+		err = bc.BlockIndexRepo.DeleteBlockIndexRecord(tipHash)
+		if err != nil {
+			return fmt.Errorf("failed to delete block index record of %s: %w", tipHash, err)
+		}
+
+		tipHash = tipRec.HashPrevBlock
+		if tipHash == blocks[0].HashPrevBlock {
+			// break at branching height
+			break
+		}
+	}
+
+	err = bc.ChainStateRepo.SetCurrentBlockHash(blocks[0].HashPrevBlock)
+	if err != nil {
+		return fmt.Errorf("failed to set current block hash: %w", err)
+	}
+
+	for _, block := range blocks {
+		err = bc.AddBlockAsTip(block)
+		if err != nil {
+			return fmt.Errorf("failed to add block %s as tip: %w", block.Hash, err)
+		}
+	}
+
 	return nil
 }

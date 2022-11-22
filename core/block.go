@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/cbergoon/merkletree"
 	log "github.com/sirupsen/logrus"
-	"math"
 	"math/big"
 	"time"
 )
@@ -46,7 +45,7 @@ func (header *BlockHeader) Hash() Hash256 {
 
 	for i := 0; i < 32; i++ {
 		data[i+8+1+4] = header.HashPrevBlock[i]
-		data[i+8+1+4+32] = header.HashPrevBlock[i]
+		data[i+8+1+4+32] = header.HashMerkleRoot[i]
 	}
 
 	return HashTo256(data)
@@ -104,9 +103,9 @@ func (block *Block) CalculateFee(uSet UXTOSet) (fee uint32, overflow bool) {
 
 func (block *Block) Verify(uSet UXTOSet, currentBits uint32, timeWindow int64, blockReward uint32) error {
 	// verify header
-	if math.Abs(float64(time.Now().Unix()-block.Time)) > float64(timeWindow) {
-		return fmt.Errorf("invalid timestamp")
-	}
+	//if math.Abs(float64(time.Now().Unix()-block.Time)) > float64(timeWindow) {
+	//	return fmt.Errorf("invalid timestamp")
+	//}
 
 	if block.NBits != currentBits {
 		return fmt.Errorf("invalid NBits")

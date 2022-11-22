@@ -14,6 +14,7 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
 	"gocoin/core"
+	"golang.org/x/exp/slices"
 	"io"
 	mrand "math/rand"
 )
@@ -110,30 +111,8 @@ func (n *Network) ListKnownAddrs() []string {
 	return ret
 }
 
-func (n *Network) handleStream(s network.Stream) {
-	ctx := context.Background()
-	log.Infof("Got a new stream!")
-	ctx = context.WithValue(ctx, "addr", FullMultiAddr(s.Conn().RemoteMultiaddr(), s.Conn().RemotePeer()))
-
-	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-
-	buf := make([]byte, S_HEADER)
-	_, err := io.ReadFull(rw, buf)
-	if err != nil {
-		log.Errorf("Error reading header: %s", err)
-		return
-	}
-	h := ReceiveHeader(buf)
-
-	switch h.Command {
-	case CMD_GETADDR:
-		n.handleGetAddr(ctx, rw)
-		break
-	}
-}
-
-func (n *Network) StartListening() {
-	n.Host.SetStreamHandler(PROTOCOL, n.handleStream)
+func (n *Network) StartListening(handler network.StreamHandler) {
+	n.Host.SetStreamHandler(PROTOCOL, handler)
 }
 
 // GetAddr requests multi-addresses the given peer knows of
@@ -171,28 +150,6 @@ func (n *Network) GetAddr(id peer.ID) ([]string, error) {
 	return addrs, nil
 }
 
-func (n *Network) handleGetAddr(ctx context.Context, rw *bufio.ReadWriter) {
-	// add to our own neighbor list
-	addr := ctx.Value("addr").(string)
-	err := n.AddPeer(addr)
-	if err != nil {
-		log.Errorf("Error adding peer: %s", err)
-		return
-	}
-
-	_, err = rw.Write(SendAddr(n.ListKnownAddrs()))
-	if err != nil {
-		log.Errorf("Error writing response: %s", err)
-		return
-	}
-
-	err = rw.Flush()
-	if err != nil {
-		log.Errorf("Error flushing response: %s", err)
-		return
-	}
-}
-
 // GetBlocks requests block ids from the given peer
 // L ---- getblocks ----> R
 // L <--- inv blocks ---- R
@@ -215,18 +172,39 @@ func (n *Network) GetBlocks(peer peer.ID, knownHashes []core.Hash256, endHash co
 		return nil
 	}
 
-	return nil
-}
-
-func (n *Network) handleGetBlocks(ctx context.Context, rw *bufio.ReadWriter, h Header) {
-	buf := make([]byte, h.SPayload)
-	_, err := io.ReadFull(rw, buf)
+	err = rw.Flush()
 	if err != nil {
-		log.Errorf("Error reading payload: %s", err)
-		return
+		log.Errorf("Error flushing request: %s", err)
+		return nil
 	}
 
-	_ = ReceiveGetBlocks(buf)
+	// receive inventories
+	buf := make([]byte, S_HEADER)
+	_, err = io.ReadFull(rw, buf) // might block during debugging
+	if err != nil {
+		log.Errorf("Error reading header: %s", err)
+		return nil
+	}
+	h := ReceiveHeader(buf)
+
+	if h.Command != CMD_INV {
+		log.Errorf("Unexpected response: %s", h.Command)
+		return nil
+	}
+
+	buf = make([]byte, h.SPayload)
+	log.Infof("Waiting for payload")
+	_, err = io.ReadFull(rw, buf)
+	log.Infof("Received inv payload")
+	if err != nil {
+		log.Infof("Error reading payload: %s", err)
+		return nil
+	}
+
+	invs := ReceiveInv(buf)
+	log.Infof("Received %d inventories of type %d", len(invs), invs[0].TypeId)
+
+	return invs
 }
 
 // DownloadBlocks requests a list of blocks from the given peer
@@ -236,17 +214,106 @@ func (n *Network) handleGetBlocks(ctx context.Context, rw *bufio.ReadWriter, h H
 // ....
 // L <----  block  ----- R
 func (n *Network) DownloadBlocks(peer peer.ID, invs []Inventory) []*core.Block {
-	return nil
+	log.Infof("GetData(block) request to %s", peer)
+	s, err := n.Host.NewStream(context.Background(), peer, PROTOCOL)
+	if err != nil {
+		log.Errorf("Error creating stream: %s", err)
+		return nil
+	}
+	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
+
+	_, err = rw.Write(SendGetData(invs))
+	err = rw.Flush()
+	if err != nil {
+		log.Errorf("Error flushing request: %s", err)
+		return nil
+	}
+
+	// receive header + block util EOF
+	blocks := make([]*core.Block, 0)
+	for {
+		buf := make([]byte, S_HEADER)
+		_, err = io.ReadFull(rw, buf)
+		if err != nil {
+			log.Errorf("Error reading header: %s", err)
+			break
+		}
+		h := ReceiveHeader(buf)
+		if h.Command != CMD_BLOCK {
+			log.Errorf("Unexpected response: %s", h.Command)
+			break
+		}
+
+		buf = make([]byte, h.SPayload)
+		_, err = io.ReadFull(rw, buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Errorf("Error reading payload: %s", err)
+			break
+		}
+
+		block := ReceiveBlock(buf)
+		log.Infof("Received block %s of height %d", block.Hash, block.Height)
+		blocks = append(blocks, block)
+	}
+
+	return blocks
 }
 
 // BroadcastBlock broadcasts a block to all peers the node currently knows of
 // L ----- block ------> R
-func (n *Network) BroadcastBlock(block *core.Block) {
+func (n *Network) BroadcastBlock(block *core.Block, excepts ...peer.ID) {
+	log.Infof("Broadcasting block %s", block.Hash)
+	for _, p := range n.Host.Network().Peers() {
+		if slices.Contains(excepts, p) {
+			continue
+		}
 
+		s, err := n.Host.NewStream(context.Background(), p, PROTOCOL)
+		if err != nil {
+			log.Errorf("Error creating stream: %s", err)
+			continue
+		}
+		rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
+
+		_, err = rw.Write(SendBlock(block))
+		if err != nil {
+			log.Errorf("Error writing request: %s", err)
+			continue
+		}
+
+		err = rw.Flush()
+		if err != nil {
+			log.Errorf("Error flushing request: %s", err)
+			continue
+		}
+	}
 }
 
 // BroadcastTx broadcasts a transaction to all peers the node currently knows of
 // L ------- tx -------> R
 func (n *Network) BroadcastTx(tx *core.Transaction) {
+	log.Infof("Broadcasting tx %s", tx.Hash())
+	for _, p := range n.Host.Network().Peers() {
+		s, err := n.Host.NewStream(context.Background(), p, PROTOCOL)
+		if err != nil {
+			log.Errorf("Error creating stream: %s", err)
+			continue
+		}
+		rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
+		_, err = rw.Write(SendTx(tx))
+		if err != nil {
+			log.Errorf("Error writing request: %s", err)
+			continue
+		}
+
+		err = rw.Flush()
+		if err != nil {
+			log.Errorf("Error flushing request: %s", err)
+			continue
+		}
+	}
 }
