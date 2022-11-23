@@ -25,12 +25,13 @@ const (
 	INITIAL_BITS        = 0x1e7fffff
 	GENESIS_BLOCK_TIME  = 1669004537 // updated when deployed
 	BLOCK_REWARD        = 1000
-	EXPECTED_BLOCK_TIME = 7  // seconds
+	EXPECTED_BLOCK_TIME = 20 // seconds
 	P_BITS_ADJUSTMENT   = 20 // blocks
 	P_BLOCK_DOWNLOAD    = 60 // seconds
 	P_PEER_DISCOVERY    = 60 // seconds
 	CTX_ADDRESS         = "address"
 	CTX_PREV_HASH       = "prev_hash"
+	CTX_PREV_HEIGHT     = "height"
 )
 
 type Blockchain struct {
@@ -48,7 +49,7 @@ type Blockchain struct {
 	branchMutex sync.Mutex
 	// handlers
 	addBlockHandlers []func(*core.Block)
-	reorgHandlers    []func([]*core.UXTO)
+	reorgHandlers    []func(*core.Block, []*core.UXTO)
 	// contexts
 	MiningCtx    context.Context
 	MingCtxMutex sync.Mutex
@@ -113,6 +114,7 @@ func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*
 	b.MiningCtx = context.Background()
 	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_ADDRESS, addr1)
 	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_PREV_HASH, genesis.Hash)
+	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_PREV_HEIGHT, genesis.Height)
 
 	return &b, nil
 }
@@ -149,15 +151,14 @@ func (bc *Blockchain) Mine(coinbase []byte, reward uint32) (*core.Block, error) 
 	if !ok {
 		return nil, fmt.Errorf("failed to get prev hash from context")
 	}
-
-	prevBlockIndex, err := bc.GetBlockIndexRecord(prevHash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get block index record %s: %w", (prevHash).String(), err)
+	prevHeight, ok := bc.MiningCtx.Value(CTX_PREV_HEIGHT).(uint32)
+	if !ok {
+		return nil, fmt.Errorf("failed to get prev height from context")
 	}
 
 	bb := core.NewBlockBuilder()
-	bb.BaseOn(prevHash, prevBlockIndex.Height)
-	nBits, err := bc.GetNBitsFor(bb.Block)
+	bb.BaseOn(prevHash, prevHeight)
+	nBits, err := bc.GetNBitsAtHeight(prevHeight + 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get nBits for block: %w", err)
 	}
@@ -174,7 +175,7 @@ func (bc *Blockchain) Mine(coinbase []byte, reward uint32) (*core.Block, error) 
 		txFee += fee
 		blkSize += len(marshal.Transaction(tx))
 
-		log.Info("Selected transaction for mining from mempool: hash=%s, fee=%d", tx.Hash(), fee)
+		log.Infof("Selected transaction for mining from mempool: hash=%s, fee=%d", tx.Hash(), fee)
 
 		if blkSize > 10*1024 { // size of a single block is less 10 KB
 			break
@@ -188,11 +189,12 @@ func (bc *Blockchain) Mine(coinbase []byte, reward uint32) (*core.Block, error) 
 		bb.AddTransaction(tx)
 	}
 
-	log.Infof("Start mining block: prevBlockHash=%s, height=%d, difficulty=%08x", bb.HashPrevBlock.String(), bb.Height, bb.NBits)
+	log.Infof("Start mining block: prevBlockHash=%s, prevHeight=%d, difficulty=%08x", bb.HashPrevBlock.String(), bb.Height-1, bb.NBits)
 	b := bb.Build()
-	log.Infof("***Mined a block***: hash: %s, prevBlockHash=%s, height=%d, difficulty=%08x", b.Hash.String(), bb.HashPrevBlock.String(), bb.Height, bb.NBits)
+	log.Infof("***Mined a block***: hash: %s, height: %d, difficulty=%08x, prevBlockHash=%s", b.Hash.String(), b.Height, b.NBits, b.HashPrevBlock.String())
 
 	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HASH, b.Hash)
+	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HEIGHT, b.Height)
 	return b, nil
 }
 
@@ -231,12 +233,75 @@ func (bc *Blockchain) ReceiveTransaction(tx *core.Transaction) error {
 }
 
 func (bc *Blockchain) VerifyBlock(block *core.Block) error {
-	nBits, err := bc.GetNBitsFor(block)
+	nBits, err := bc.GetNBitsAtHeight(block.Height)
 	if err != nil {
 		return fmt.Errorf("failed to get nBits for block %d: %w", block.Height, err)
 	}
 	if err := block.Verify(bc.ChainStateRepo, nBits, 500, BLOCK_REWARD); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (bc *Blockchain) ReceiveUnseenBlock(block *core.Block) error {
+	// check if it references the tip
+	tipHash, err := bc.GetCurrentBlockHash()
+	if err != nil {
+		return fmt.Errorf("failed to get current block hash: %w", err)
+	}
+
+	if block.HashPrevBlock == tipHash {
+		// update blockchain tip
+		if err = bc.AddBlockAsTip(block); err != nil {
+			return fmt.Errorf("failed to add block as tip: %s", err)
+		}
+		return nil
+	}
+
+	// add to orphanage or drop
+	// TODO: orphan blocks need to be verified with reference its height
+	// TODO: currently we just _assume_ they are valid
+	// TODO: in this way, a reorg might fail due to an invalid block after we roll back UXTOs
+	// TODO: and the blockchain will be stale and needs a sync with other nodes
+	log.Infof("Reiceived an orphan block %s of height %d", block.Hash, block.Height)
+	_, err = bc.BlockIndexRepo.GetBlockIndexRecord(block.HashPrevBlock)
+	if err != nil && err != persistence.ErrNotFound {
+		return fmt.Errorf("failed to get block index record: %w", err)
+	}
+
+	// this block accesses past blocks
+	if err == nil {
+		bc.branch = []*core.Block{}
+		bc.branch = append(bc.branch, block)
+		log.Infof("Orphan block %s has a known parent %s on active chain. Marked as possible new branch", block.Hash, block.HashPrevBlock)
+		return nil
+	}
+
+	// if not found, it means the parent block is not on the active chain
+	// we need to check if it is on the orphanage
+	if err == persistence.ErrNotFound {
+		// this block is a child of the last block in the branch
+		if len(bc.branch) != 0 && bc.branch[len(bc.branch)-1].Hash == block.HashPrevBlock {
+			bc.branch = append(bc.branch, block)
+			log.Infof("Orphan block %s is the tip of new branch. Appended.", block.Hash)
+
+			// if the blockchain tip is lower than the branch tip, reorganize
+			rec, err := bc.GetBlockIndexRecord(tipHash)
+			if err != nil {
+				return fmt.Errorf("failed to get block index record for tip %s: %w", tipHash, err)
+			}
+			if rec.Height < bc.branch[len(bc.branch)-1].Height {
+				log.Infof("Fork detected. Reorganizing to new branch...")
+				if err := bc.Reorganize(bc.branch); err != nil {
+					return fmt.Errorf("failed to reorganize: %w", err)
+				}
+
+				bc.branch = []*core.Block{}
+			}
+		} else {
+			log.Infof("Orphan block %s is dropped", block.Hash)
+		}
 	}
 
 	return nil
@@ -384,22 +449,22 @@ func (bc *Blockchain) AddBlockAsTip(block *core.Block) error {
 	return nil
 }
 
-func (bc *Blockchain) GetNBitsFor(block *core.Block) (uint32, error) {
-	if block.Height == 0 {
+func (bc *Blockchain) GetNBitsAtHeight(height uint32) (uint32, error) {
+	if height == 0 {
 		return INITIAL_BITS, nil
 	}
 
-	brLast, err := bc.GetBlockIndexRecordOfHeight(block.Height - 1)
+	brLast, err := bc.GetBlockIndexRecordOfHeight(height - 1)
 	if err != nil {
-		return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-1, err)
+		return 0, fmt.Errorf("failed to get block index record of height %d: %w", height-1, err)
 	}
 
-	if block.Height == 1 || block.Height%P_BITS_ADJUSTMENT != 1 {
+	if height == 1 || height%P_BITS_ADJUSTMENT != 1 {
 		return brLast.NBits, nil
 	} else {
-		brAgo, err := bc.GetBlockIndexRecordOfHeight(block.Height - P_BITS_ADJUSTMENT)
+		brAgo, err := bc.GetBlockIndexRecordOfHeight(height - P_BITS_ADJUSTMENT)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get block index record of height %d: %w", block.Height-P_BITS_ADJUSTMENT, err)
+			return 0, fmt.Errorf("failed to get block index record of height %d: %w", height-P_BITS_ADJUSTMENT, err)
 		}
 
 		duration := brLast.Time - brAgo.Time // in seconds
@@ -588,6 +653,10 @@ func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 	}
 
 	for {
+		// for every block:
+		// 1. remove the block index
+		// 2. add back revs for that block (uxtos spent)
+		// 3. delete uxtos generated
 		tipRec, err := bc.GetBlockIndexRecord(tipHash)
 		if err != nil {
 			return fmt.Errorf("failed to get block index record of %s: %w", tipHash, err)
@@ -599,6 +668,7 @@ func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 		}
 
 		tipRev := tipFile.Revs[tipRec.Offset]
+		tipBlk := tipFile.Blocks[tipRec.Offset]
 		for _, u := range tipRev {
 			err = bc.ChainStateRepo.PutUXTO(u)
 			if err != nil {
@@ -606,8 +676,16 @@ func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 			}
 		}
 
+		generatedUXTOs := core.GenerateUXTOsFromBlock(tipBlk)
+		for _, u := range generatedUXTOs {
+			err = bc.ChainStateRepo.RemoveUXTO(u.TxId, u.N)
+			if err != nil {
+				return fmt.Errorf("failed to delete uxto: %w", err)
+			}
+		}
+
 		for _, handler := range bc.reorgHandlers {
-			handler(tipRev)
+			handler(tipBlk, tipRev)
 		}
 
 		err = bc.BlockIndexRepo.DeleteBlockIndexRecord(tipHash)
@@ -641,6 +719,6 @@ func (bc *Blockchain) RegisterAddBlockHandler(handler func(*core.Block)) {
 	bc.addBlockHandlers = append(bc.addBlockHandlers, handler)
 }
 
-func (bc *Blockchain) RegisterReorgHandler(handler func([]*core.UXTO)) {
+func (bc *Blockchain) RegisterReorgHandler(handler func(*core.Block, []*core.UXTO)) {
 	bc.reorgHandlers = append(bc.reorgHandlers, handler)
 }

@@ -312,11 +312,11 @@ func (w *DiskWallet) ProcessBlock(block *core.Block) {
 	}
 }
 
-func (w *DiskWallet) RollBack(uxtos []*core.UXTO) {
+func (w *DiskWallet) RollBack(block *core.Block, spent []*core.UXTO) {
 	err := w.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("uxtos"))
 
-		for _, uxto := range uxtos {
+		for _, uxto := range spent {
 			uRef := persistence.UXTORef{
 				TxId: uxto.TxId,
 				N:    uxto.N,
@@ -325,6 +325,22 @@ func (w *DiskWallet) RollBack(uxtos []*core.UXTO) {
 			if err := b.Put(uRef.Serialize(), marshal.SerializeUXTO(uxto)); err != nil {
 				return fmt.Errorf("failed to put uxto: %w", err)
 			}
+
+			log.Infof("Added uxto (Rollback): txId=%s, vout=%d, value=%d", uRef.TxId, uRef.N, uxto.Value)
+		}
+
+		generated := core.GenerateUXTOsFromBlock(block)
+		for _, uxto := range generated {
+			uRef := persistence.UXTORef{
+				TxId: uxto.TxId,
+				N:    uxto.N,
+			}
+
+			if err := b.Delete(uRef.Serialize()); err != nil {
+				return fmt.Errorf("failed to delete uxto: %w", err)
+			}
+
+			log.Infof("Deleted uxto (Rollback): txId=%s, vout=%d, value=%d", uRef.TxId, uRef.N, uxto.Value)
 		}
 
 		return nil

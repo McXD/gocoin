@@ -198,67 +198,18 @@ func handleBroadcastBlock(ctx context.Context, bc *Blockchain, rw *bufio.ReadWri
 	} else if err != persistence.ErrNotFound {
 		log.Errorf("Error getting block index record: %s", err)
 		return
-	} else {
-		// we don't have the block
-		// record it and broadcast
-
-		// check if it references the tip
-		tipHash, err := bc.GetCurrentBlockHash()
-		if err != nil {
-			log.Errorf("Error getting current block hash: %s", err)
-			return
-		}
-
-		if block.HashPrevBlock != tipHash {
-			// TODO: orphan blocks need to be verified with reference its height
-			// TODO: currently we just _assume_ they are valid
-			// TODO: in this way, a reorg might fail due to an invalid block after we roll back UXTOs
-			// TODO: and the blockchain will be stale and needs a sync with other nodes
-			log.Infof("Reiceived an orphan block %s of height %d", block.Hash, block.Height)
-			if _, err := bc.BlockIndexRepo.GetBlockIndexRecord(block.HashPrevBlock); err == nil {
-				bc.branch = []*core.Block{}
-				bc.branch = append(bc.branch, block)
-				log.Infof("Orphan block %s has a known parent %s on active chain. Marked as possible new branch", block.Hash, block.HashPrevBlock)
-			} else if err == persistence.ErrNotFound {
-				if len(bc.branch) != 0 && bc.branch[len(bc.branch)-1].Hash == block.HashPrevBlock {
-					bc.branch = append(bc.branch, block)
-					log.Infof("Orphan block %s is the tip of new branch. Appended.", block.Hash)
-
-					// if the blockchain tip is lower than the branch tip, reorganize
-					rec, err := bc.GetBlockIndexRecord(tipHash)
-					if err != nil {
-						log.Errorf("Error getting blockchain tip index: %s", err)
-						return
-					}
-					if rec.Height < bc.branch[len(bc.branch)-1].Height {
-						log.Infof("Fork detected. Reorganizing to new branch")
-						if err := bc.Reorganize(bc.branch); err != nil {
-							log.Errorf("Error reorganizing: %s", err)
-							return
-						}
-						bc.branch = []*core.Block{}
-					}
-				} else {
-					log.Infof("Orphan block %s is dropped", block.Hash)
-				}
-			} else {
-				log.Errorf("Error getting block index record: %s", err)
-				return
-			}
-
-			// TODO: see if we should request missing blocks
-
-		} else {
-			// update blockchain tip
-			if err = bc.AddBlockAsTip(block); err != nil {
-				log.Errorf("Error adding block: %s", err)
-				return
-			}
-		}
-
-		// broadcast
-		go bc.Network.BroadcastBlock(block, ctx.Value("peerId").(peer.ID))
 	}
+
+	// we don't have the block
+	// record it and broadcast
+	err = bc.ReceiveUnseenBlock(block)
+	if err != nil {
+		log.Errorf("Error receiving an unseen block: %s", err)
+		return
+	}
+
+	// broadcast
+	go bc.Network.BroadcastBlock(block, ctx.Value("peerId").(peer.ID))
 
 	bc.branchMutex.Unlock()
 }

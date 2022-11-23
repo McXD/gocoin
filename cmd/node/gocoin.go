@@ -73,10 +73,10 @@ func main() {
 	}
 
 	bc, err := blockchain.NewBlockchain(*rootFlag, *p2pHostName, *p2pPort, *randSeed)
-	shouldPanic(err)
+	shouldLog(err)
 	if *cFlag {
 		err = initWallet(bc.DiskWallet)
-		shouldPanic(err)
+		shouldLog(err)
 	}
 
 	// start up servers
@@ -97,10 +97,10 @@ func main() {
 			binary.PutVarint(timestamp[:], time.Now().UnixNano())
 			coinbase := append(timestamp[:], []byte("coinbase")...)
 			b, err := bc.Mine(coinbase, blockchain.BLOCK_REWARD)
-			shouldPanic(err)
+			shouldLog(err)
 
-			err = bc.AddBlockAsTip(b)
-			shouldPanic(err)
+			err = bc.ReceiveUnseenBlock(b)
+			shouldLog(err)
 
 			go bc.Network.BroadcastBlock(b)
 		}
@@ -146,13 +146,13 @@ func initWallet(w *wallet.DiskWallet) error {
 
 func cleanup(rootDir string) {
 	err := os.RemoveAll(rootDir)
-	shouldPanic(err)
+	shouldLog(err)
 
 }
 
-func shouldPanic(err error) {
+func shouldLog(err error) {
 	if err != nil {
 		debug.PrintStack()
-		panic(err)
+		log.Errorf("%v", err)
 	}
 }

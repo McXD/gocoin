@@ -150,6 +150,7 @@ func (b *BlockchainController) SendFrom(c *gin.Context) {
 type MiningCtxDTO struct {
 	MinerAddress string `json:"minerAddress"`
 	PrevHash     string `json:"prevHash"`
+	PrevHeight   uint32 `json:"prevHeight"`
 }
 
 // GetMiningContext returns the mining context.
@@ -158,9 +159,10 @@ func (b *BlockchainController) GetMiningContext(c *gin.Context) {
 	b.MingCtxMutex.Lock()
 	addr, ok1 := b.MiningCtx.Value(blockchain.CTX_ADDRESS).(core.Hash160)
 	prevHash, ok2 := b.MiningCtx.Value(blockchain.CTX_PREV_HASH).(core.Hash256)
+	prevHeight, ok3 := b.MiningCtx.Value(blockchain.CTX_PREV_HEIGHT).(uint32)
 	b.MingCtxMutex.Unlock()
 
-	if !ok1 || !ok2 {
+	if !ok1 || !ok2 || !ok3 {
 		SendError(c, http.StatusInternalServerError, errors.New("invalid mining context"))
 		return
 	}
@@ -168,6 +170,7 @@ func (b *BlockchainController) GetMiningContext(c *gin.Context) {
 	c.JSON(http.StatusOK, MiningCtxDTO{
 		MinerAddress: addr.String(),
 		PrevHash:     prevHash.String(),
+		PrevHeight:   prevHeight,
 	})
 }
 
@@ -199,8 +202,13 @@ func (b *BlockchainController) SetMiningContext(c *gin.Context) {
 			if err != nil {
 				SendError(c, http.StatusBadRequest, err)
 			}
+			if form.PrevHeight == 0 {
+				SendError(c, http.StatusBadRequest, errors.New("prevHeight is required"))
+			}
+
 			b.MiningCtx = context.WithValue(b.MiningCtx, blockchain.CTX_PREV_HASH, prevHash)
-			log.Infof("mining context: prev hash set to %s", prevHash.String())
+			b.MiningCtx = context.WithValue(b.MiningCtx, blockchain.CTX_PREV_HEIGHT, form.PrevHeight)
+			log.Infof("mining context: prev hash set to %s at %d", prevHash.String(), form.PrevHeight)
 		}
 	}()
 }

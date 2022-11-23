@@ -43,3 +43,27 @@ func Contains(s []uint32, e uint32) bool {
 	}
 	return false
 }
+
+func GenerateUXTOsFromTx(tx *Transaction) []*UXTO {
+	var uxto []*UXTO
+
+	for i, out := range tx.Outs {
+		uxto = append(uxto, &UXTO{
+			TxId:  tx.Hash(),
+			TxOut: out,
+			N:     uint32(i),
+		})
+	}
+
+	return uxto
+}
+
+func GenerateUXTOsFromBlock(block *Block) []*UXTO {
+	var uxto []*UXTO
+
+	for _, tx := range block.Transactions {
+		uxto = append(uxto, GenerateUXTOsFromTx(tx)...)
+	}
+
+	return uxto
+}
