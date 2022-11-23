@@ -314,15 +314,21 @@ func (w *DiskWallet) ProcessBlock(block *core.Block) {
 
 func (w *DiskWallet) RollBack(block *core.Block, spent []*core.UXTO) {
 	err := w.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("uxtos"))
+		uxtos := tx.Bucket([]byte("uxtos"))
+		addresses := tx.Bucket([]byte("addresses"))
 
 		for _, uxto := range spent {
+			if addresses.Get(uxto.TxOut.PubKeyHash[:]) == nil {
+				// not ours
+				continue
+			}
+
 			uRef := persistence.UXTORef{
 				TxId: uxto.TxId,
 				N:    uxto.N,
 			}
 
-			if err := b.Put(uRef.Serialize(), marshal.SerializeUXTO(uxto)); err != nil {
+			if err := uxtos.Put(uRef.Serialize(), marshal.SerializeUXTO(uxto)); err != nil {
 				return fmt.Errorf("failed to put uxto: %w", err)
 			}
 
@@ -336,7 +342,12 @@ func (w *DiskWallet) RollBack(block *core.Block, spent []*core.UXTO) {
 				N:    uxto.N,
 			}
 
-			if err := b.Delete(uRef.Serialize()); err != nil {
+			if uxtos.Get(uRef.Serialize()) == nil {
+				// not ours
+				continue
+			}
+
+			if err := uxtos.Delete(uRef.Serialize()); err != nil {
 				return fmt.Errorf("failed to delete uxto: %w", err)
 			}
 

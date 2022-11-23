@@ -33,7 +33,7 @@ func (txIn *TxIn) SpentBy() Hash160 {
 }
 
 type TxOut struct {
-	Value uint32 // number of satoshi (100,000,000)
+	Value uint32 // number of coins
 	ScriptPubKey
 }
 

@@ -56,9 +56,9 @@ func main() {
 	greeting()
 
 	// parse command line arguments
-	mFlag := flag.Bool("m", true, "enable mining")
+	mFlag := flag.Bool("mine", true, "enable mining")
 	rootFlag := flag.String("root", "/tmp/gocoin", "root directory")
-	cFlag := flag.Bool("c", true, "clean up")
+	cFlag := flag.Bool("clean", true, "clean up")
 	p2pHostName := flag.String("p2p-host", "localhost", "p2p host name")
 	p2pPort := flag.Int("p2p-port", 8844, "p2p port")
 	rpcPort := flag.Int("rpc-port", 8080, "rpc port")

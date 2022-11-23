@@ -25,7 +25,7 @@ const (
 	INITIAL_BITS        = 0x1e7fffff
 	GENESIS_BLOCK_TIME  = 1669004537 // updated when deployed
 	BLOCK_REWARD        = 1000
-	EXPECTED_BLOCK_TIME = 20 // seconds
+	EXPECTED_BLOCK_TIME = 15 // seconds
 	P_BITS_ADJUSTMENT   = 20 // blocks
 	P_BLOCK_DOWNLOAD    = 60 // seconds
 	P_PEER_DISCOVERY    = 60 // seconds
@@ -35,24 +35,20 @@ const (
 )
 
 type Blockchain struct {
-	RootDir string
-	*wallet.DiskWallet
-	*persistence.BlockFile
-	*persistence.BlockIndexRepo
-	*persistence.ChainStateRepo
-	// transactions in mempool is gaurenteed be valid according to the current state, readily to be mined
-	mempool      list.List
-	mempoolMutex sync.Mutex
-	*p2p.Network
-	// a possible new branch
-	branch      []*core.Block
-	branchMutex sync.Mutex
-	// handlers
-	addBlockHandlers []func(*core.Block)
-	reorgHandlers    []func(*core.Block, []*core.UXTO)
-	// contexts
-	MiningCtx    context.Context
-	MingCtxMutex sync.Mutex
+	RootDir                     string    // root directory of the blockchain
+	*wallet.DiskWallet                    // built-in wallet
+	*persistence.BlockFile                // current block file
+	*persistence.BlockIndexRepo           // block index repository
+	*persistence.ChainStateRepo           // chain state repository
+	mempool                     list.List // transaction memory pool
+	mempoolMutex                sync.Mutex
+	*p2p.Network                              // peer-to-peer network
+	branch                      []*core.Block // a possible new branch (orphanage)
+	branchMutex                 sync.Mutex
+	addBlockHandlers            []func(*core.Block)
+	reorgHandlers               []func(*core.Block, []*core.UXTO)
+	MiningCtx                   context.Context // context for mining
+	MingCtxMutex                sync.Mutex
 }
 
 // NewBlockchain creates a new blockchain at path as root directory.
@@ -482,7 +478,6 @@ func (bc *Blockchain) handleStream(s network.Stream) {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, "addr", p2p.FullMultiAddr(s.Conn().RemoteMultiaddr(), s.Conn().RemotePeer()))
 	ctx = context.WithValue(ctx, "peerId", s.Conn().RemotePeer())
-	log.Infof("Established connection with %s", ctx.Value("addr"))
 
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 

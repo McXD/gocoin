@@ -10,8 +10,7 @@ import (
 )
 
 type BlockHeader struct {
-	Time int64
-	// NBits is a compact representation of the target value of PoW (i.e., number of leading zeros), stored in big-endian
+	Time           int64
 	NBits          uint32
 	Nonce          uint32
 	HashPrevBlock  Hash256
@@ -106,10 +105,12 @@ func (block *Block) Verify(uSet UXTOSet, currentBits uint32, timeWindow int64, b
 	//if math.Abs(float64(time.Now().Unix()-block.Time)) > float64(timeWindow) {
 	//	return fmt.Errorf("invalid timestamp")
 	//}
+	// commented out for demo
 
-	if block.NBits != currentBits {
-		return fmt.Errorf("invalid NBits")
-	}
+	//if block.NBits != currentBits {
+	//	return fmt.Errorf("invalid NBits")
+	//}
+	// commented out for demo
 
 	if mr, err := block.CalculateMerkleRoot(); err != nil {
 		log.Warnf("Error calculating MerkleRoot for block %X: %s", block.Hash[:], err)

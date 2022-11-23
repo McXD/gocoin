@@ -1,0 +1,32 @@
+### Check mine's wallet
+GET http://localhost:8081/wallet/info
+Accept: application/json
+
+### Check spv's wallet
+GET http://localhost:8082/wallet/info
+Accept: application/json
+
+### Check current mining context
+GET http://localhost:8081/blockchain/miningContext
+Accept: application/json
+
+### Send a transaction
+POST localhost:8081/wallet/sendFrom
+Content-Type: application/json
+
+{
+  "from": "2NbWU5r5cMHScc8doy5dELCJZVNF",
+  "to": "3ACiBVtYmmwRQpkzdeuU3dgDqmmE",
+  "amount": 10000,
+  "fee": 500
+}
+
+### Set mining context to roll back before we made the payment
+POST http://localhost:8081/blockchain/miningContext
+Content-Type: application/json
+
+{
+  "minerAddress": "",
+  "prevHash": "0000003A663ECC340925C3A45BA3FA0BE49FF996B3AC4D9715F1E5FED88D66C3",
+  "prevHeight": 26
+}
