@@ -54,7 +54,7 @@ func init() {
 	for i := 0; i < 10; i++ {
 		b, err := bc1.Mine(getCoinbase(), bc1.DiskWallet.ListAddresses()[0], BLOCK_REWARD)
 		shouldFail(err)
-		err = bc1.AddBlockAsTip(b)
+		err = bc1.addBlockAsTip(b)
 		shouldFail(err)
 		err = bc1.DiskWallet.ProcessBlock(b)
 		shouldFail(err)
@@ -95,7 +95,7 @@ func TestHandleBroadcast(t *testing.T) {
 	invs := bc2.Network.GetBlocks(bc1.ID(), []core.Hash256{currentHash}, core.Hash256{})
 	blocks := bc2.Network.DownloadBlocks(bc1.ID(), invs[:len(invs)])
 	for _, b := range blocks[1:] { // we already have the first block
-		err := bc2.AddBlockAsTip(b)
+		err := bc2.addBlockAsTip(b)
 		shouldFail(err)
 	}
 
@@ -103,7 +103,7 @@ func TestHandleBroadcast(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		b, err := bc2.Mine(getCoinbase(), addr, BLOCK_REWARD)
 		shouldFail(err)
-		err = bc2.AddBlockAsTip(b)
+		err = bc2.addBlockAsTip(b)
 		shouldFail(err)
 		bc2.Network.BroadcastBlock(b)
 	}
@@ -119,7 +119,7 @@ func TestHandleReorg(t *testing.T) {
 	invs := bc2.Network.GetBlocks(bc1.ID(), []core.Hash256{currentHash}, core.Hash256{})
 	blocks := bc2.Network.DownloadBlocks(bc1.ID(), invs[:len(invs)])
 	for _, b := range blocks[1 : len(blocks)-1] {
-		err := bc2.AddBlockAsTip(b)
+		err := bc2.addBlockAsTip(b)
 		shouldFail(err)
 	}
 
@@ -128,7 +128,7 @@ func TestHandleReorg(t *testing.T) {
 		b, err := bc2.Mine(getCoinbase(), addr, BLOCK_REWARD)
 		shouldFail(err)
 
-		err = bc2.AddBlockAsTip(b)
+		err = bc2.addBlockAsTip(b)
 		shouldFail(err)
 		bc2.Network.BroadcastBlock(b)
 	}
@@ -144,7 +144,7 @@ func TestHandleTransaction(t *testing.T) {
 	invs := bc2.Network.GetBlocks(bc1.ID(), []core.Hash256{currentHash}, core.Hash256{})
 	blocks := bc2.Network.DownloadBlocks(bc1.ID(), invs[:len(invs)])
 	for _, b := range blocks[1:len(blocks)] {
-		err := bc2.AddBlockAsTip(b)
+		err := bc2.addBlockAsTip(b)
 		shouldFail(err)
 	}
 

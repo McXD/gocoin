@@ -199,10 +199,17 @@ func handleBroadcastBlock(ctx context.Context, bc *Blockchain, rw *bufio.ReadWri
 		log.Errorf("Error getting block index record: %s", err)
 		return
 	}
+	for _, b := range bc.branch {
+		if b.Hash == block.Hash {
+			// we already have the block
+			log.Infof("Already received block %s at %d as orphan. Dropped", block.Hash, block.Height)
+			return
+		}
+	}
 
 	// we don't have the block
 	// record it and broadcast
-	err = bc.ReceiveUnseenBlock(block)
+	bc.AddBlockToQueue(block)
 	if err != nil {
 		log.Errorf("Error receiving an unseen block: %s", err)
 		return

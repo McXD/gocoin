@@ -63,7 +63,6 @@ func main() {
 	p2pPort := flag.Int("p2p-port", 8844, "p2p port")
 	rpcPort := flag.Int("rpc-port", 8080, "rpc port")
 	seedFlag := flag.String("seed", "", "seed node multi-address")
-	randSeed := flag.Int64("rand-seed", 0, "random seed")
 
 	flag.Parse()
 
@@ -72,7 +71,7 @@ func main() {
 		initDirs(*rootFlag)
 	}
 
-	bc, err := blockchain.NewBlockchain(*rootFlag, *p2pHostName, *p2pPort, *randSeed)
+	bc, err := blockchain.NewBlockchain(*rootFlag, *p2pHostName, *p2pPort)
 	shouldLog(err)
 	if *cFlag {
 		err = initWallet(bc.DiskWallet)
@@ -82,14 +81,16 @@ func main() {
 	// start up servers
 	go startRPC(*rpcPort, bc)
 	go bc.StartP2PListener()
+	go bc.ProcessBlockQueue()
+	go bc.DownloadBlocks()
 
 	// periodically discover peers
 	if *seedFlag != "" {
 		go bc.StartPeerDiscovery(*seedFlag)
 	}
 
+	// mining mode
 	if *mFlag {
-		// start mining
 		log.Infof("Start mining...")
 
 		for {
@@ -98,17 +99,13 @@ func main() {
 			coinbase := append(timestamp[:], []byte("coinbase")...)
 			b, err := bc.Mine(coinbase, blockchain.BLOCK_REWARD)
 			shouldLog(err)
-
-			err = bc.ReceiveUnseenBlock(b)
-			shouldLog(err)
-
+			bc.AddBlockToQueue(b)
 			go bc.Network.BroadcastBlock(b)
+			time.Sleep(100 * time.Millisecond) // wait for the tip to be added
 		}
-	} else {
-		// periodically download blocks
-		go bc.StartBlockDownloads()
 	}
 
+	// don't quit
 	time.Sleep(10000 * time.Second)
 }
 

@@ -1,0 +1,192 @@
+{
+	"info": {
+		"_postman_id": "27dc9f53-1949-406b-9c5b-53ea7e9d3606",
+		"name": "GoCoin",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "15938637"
+	},
+	"item": [
+		{
+			"name": "WalletInfo",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base}}/wallet/info",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"wallet",
+						"info"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "NewAddress",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base}}/wallet/newAddress",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"wallet",
+						"newAddress"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "SendFrom",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"from\": \"k3FASEr5un8gL2xH9FxKc22jyt2\",\n    \"to\": \"2S6eKJyKHssM2ptdCsrtoL9LcZ8F\",\n    \"amount\": 10000,\n    \"fee\": 500\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{base}}/wallet/sendFrom",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"wallet",
+						"sendFrom"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "ListUnspent",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base}}/wallet/listUnspent?address=eRd4SrCQdU8w1u956H6DBst2Gbp",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"wallet",
+						"listUnspent"
+					],
+					"query": [
+						{
+							"key": "address",
+							"value": "eRd4SrCQdU8w1u956H6DBst2Gbp"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GetTransaction",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base}}/blockchain/transactions?txId=D7F2C65FD4F108081138FE29CEE5CDC58837A8EF21D4EC3DF1872BD0B3BE1980",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"blockchain",
+						"transactions"
+					],
+					"query": [
+						{
+							"key": "txId",
+							"value": "D7F2C65FD4F108081138FE29CEE5CDC58837A8EF21D4EC3DF1872BD0B3BE1980"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "ListAddress",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base}}/wallet/listAddress",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"wallet",
+						"listAddress"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "GetMiningContext",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base}}/blockchain/miningContext",
+					"host": [
+						"{{base}}"
+					],
+					"path": [
+						"blockchain",
+						"miningContext"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "SetMiningContext",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base",
+			"value": "http://localhost:8081",
+			"type": "string"
+		}
+	]
+}

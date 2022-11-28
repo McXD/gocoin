@@ -25,6 +25,7 @@ const (
 	INITIAL_BITS        = 0x1e7fffff
 	GENESIS_BLOCK_TIME  = 1669004537 // updated when deployed
 	BLOCK_REWARD        = 1000
+	S_BLOCK_QUEUE       = 100
 	EXPECTED_BLOCK_TIME = 15 // seconds
 	P_BITS_ADJUSTMENT   = 20 // blocks
 	P_BLOCK_DOWNLOAD    = 60 // seconds
@@ -35,8 +36,8 @@ const (
 )
 
 type Blockchain struct {
-	RootDir                     string    // root directory of the blockchain
-	*wallet.DiskWallet                    // built-in wallet
+	RootDir                     string    // root directory of the blockchain data
+	*wallet.DiskWallet                    // built-in persisted wallet
 	*persistence.BlockFile                // current block file
 	*persistence.BlockIndexRepo           // block index repository
 	*persistence.ChainStateRepo           // chain state repository
@@ -49,12 +50,13 @@ type Blockchain struct {
 	reorgHandlers               []func(*core.Block, []*core.UXTO)
 	MiningCtx                   context.Context // context for mining
 	MingCtxMutex                sync.Mutex
+	blockQueue                  chan *core.Block
 }
 
 // NewBlockchain creates a new blockchain at path as root directory.
 // This method does _not_ overwrite existing blockchain state.
 // Genesis block is created hard-coded.
-func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*Blockchain, error) {
+func NewBlockchain(rootDir string, hostname string, port int) (*Blockchain, error) {
 	w, err := wallet.NewDiskWallet(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load or create wallet: %w", err)
@@ -74,7 +76,7 @@ func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*
 		return nil, fmt.Errorf("cannot get current block file id: %w", err)
 	}
 	bf, err := persistence.NewBlockFile(rootDir, bfId)
-	net, err := p2p.NewNetwork(hostname, port, randseed)
+	net, err := p2p.NewNetwork(hostname, port, 0)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create network: %w", err)
 	}
@@ -88,9 +90,11 @@ func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*
 		Network:        net,
 	}
 
+	b.MiningCtx = context.Background()
+
 	// create genesis
 	genesis := makeGenesisBlock()
-	err = b.AddBlockAsTip(genesis)
+	err = b.addBlockAsTip(genesis)
 	if err != nil {
 		return nil, fmt.Errorf("cannot add genesis block: %w", err)
 	}
@@ -107,10 +111,12 @@ func NewBlockchain(rootDir string, hostname string, port int, randseed int64) (*
 	b.RegisterReorgHandler(b.DiskWallet.RollBack)
 
 	// set initial contexts
-	b.MiningCtx = context.Background()
 	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_ADDRESS, addr1)
 	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_PREV_HASH, genesis.Hash)
 	b.MiningCtx = context.WithValue(b.MiningCtx, CTX_PREV_HEIGHT, genesis.Height)
+
+	// initialize the block queue
+	b.blockQueue = make(chan *core.Block, S_BLOCK_QUEUE)
 
 	return &b, nil
 }
@@ -136,9 +142,7 @@ func makeGenesisBlock() *core.Block {
 // 2. The block must contain at least one coinbase transaction
 // 3. Transactions with higher fees are preferred
 func (bc *Blockchain) Mine(coinbase []byte, reward uint32) (*core.Block, error) {
-	// get values from context
-	bc.MingCtxMutex.Lock()
-	defer bc.MingCtxMutex.Unlock()
+	// read mining parameters from context
 	addr, ok := bc.MiningCtx.Value(CTX_ADDRESS).(core.Hash160)
 	if !ok {
 		return nil, fmt.Errorf("failed to get address from context")
@@ -189,8 +193,6 @@ func (bc *Blockchain) Mine(coinbase []byte, reward uint32) (*core.Block, error) 
 	b := bb.Build()
 	log.Infof("***Mined a block***: hash: %s, height: %d, difficulty=%08x, prevBlockHash=%s", b.Hash.String(), b.Height, b.NBits, b.HashPrevBlock.String())
 
-	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HASH, b.Hash)
-	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HEIGHT, b.Height)
 	return b, nil
 }
 
@@ -228,6 +230,80 @@ func (bc *Blockchain) ReceiveTransaction(tx *core.Transaction) error {
 	return nil
 }
 
+func (bc *Blockchain) AddBlockToQueue(b *core.Block) {
+	log.Infof("Add block to queue: %s", b.Hash.String())
+	bc.blockQueue <- b
+}
+
+// ProcessBlockQueue processes a block from the queue according to the following rules:
+// 1. If the block references the current tip, add it to the chain (as the new tip)
+// 2. If the block references a stale block or a block in the orphan pool, add it to the orphan pool (possible fork). Reorganize when necessary.
+// 3. Else drop it
+//
+// Verification is only performed for the new tip. The verification for orphaned blocks will be performed during reorganization.
+func (bc *Blockchain) ProcessBlockQueue() {
+	for {
+		block := <-bc.blockQueue
+		log.Infof("Processing a block: hash=%s, height=%d, prevBlockHash=%s", block.Hash.String(), block.Height, block.HashPrevBlock.String())
+
+		// check if it references the tip
+		tipHash, err := bc.GetCurrentBlockHash()
+		if err != nil {
+			log.Errorf("failed to get current block hash: %s", err)
+			continue
+		}
+
+		if block.HashPrevBlock == tipHash {
+			// update blockchain tip
+			if err = bc.addBlockAsTip(block); err != nil {
+				log.Errorf("failed to add block as tip: %s", err)
+			}
+			continue
+		}
+
+		// check if it references a stale block
+		_, err = bc.BlockIndexRepo.GetBlockIndexRecord(block.HashPrevBlock)
+		if err != nil && err != persistence.ErrNotFound {
+			log.Errorf("failed to get block index record: %s", err)
+			continue
+		}
+
+		if err == nil {
+			bc.branch = []*core.Block{}
+			bc.branch = append(bc.branch, block)
+			log.Infof("Orphan block %s at %d has a known parent %s at on active chain. Marked as possible new branch", block.Hash, block.Height, block.HashPrevBlock)
+			continue
+		}
+
+		// check if it references a block in the orphan pool
+		if err == persistence.ErrNotFound {
+			// this block is a child of the last block in the branch
+			if len(bc.branch) != 0 && bc.branch[len(bc.branch)-1].Hash == block.HashPrevBlock {
+				bc.branch = append(bc.branch, block)
+				log.Infof("Orphan block %s is the tip of new branch. Appended.", block.Hash)
+
+				// if the blockchain tip is lower than the branch tip, reorganize
+				rec, err := bc.GetBlockIndexRecord(tipHash)
+				if err != nil {
+					log.Errorf("failed to get block index record for tip %s: %s", tipHash, err)
+					continue
+				}
+				if rec.Height < bc.branch[len(bc.branch)-1].Height {
+					log.Infof("Fork detected. Reorganizing to new branch...")
+					if err := bc.Reorganize(bc.branch); err != nil {
+						log.Errorf("failed to reorganize: %s", err)
+						continue
+					}
+
+					bc.branch = []*core.Block{}
+				}
+			} else {
+				log.Infof("Orphan block %s is dropped", block.Hash)
+			}
+		}
+	}
+}
+
 func (bc *Blockchain) VerifyBlock(block *core.Block) error {
 	nBits, err := bc.GetNBitsAtHeight(block.Height)
 	if err != nil {
@@ -240,71 +316,11 @@ func (bc *Blockchain) VerifyBlock(block *core.Block) error {
 	return nil
 }
 
-func (bc *Blockchain) ReceiveUnseenBlock(block *core.Block) error {
-	// check if it references the tip
-	tipHash, err := bc.GetCurrentBlockHash()
-	if err != nil {
-		return fmt.Errorf("failed to get current block hash: %w", err)
-	}
+// addBlockAsTip add the block as the active tip. The block is verified against the current state.
+func (bc *Blockchain) addBlockAsTip(block *core.Block) error {
+	bc.MingCtxMutex.Lock()
+	defer bc.MingCtxMutex.Unlock()
 
-	if block.HashPrevBlock == tipHash {
-		// update blockchain tip
-		if err = bc.AddBlockAsTip(block); err != nil {
-			return fmt.Errorf("failed to add block as tip: %s", err)
-		}
-		return nil
-	}
-
-	// add to orphanage or drop
-	// TODO: orphan blocks need to be verified with reference its height
-	// TODO: currently we just _assume_ they are valid
-	// TODO: in this way, a reorg might fail due to an invalid block after we roll back UXTOs
-	// TODO: and the blockchain will be stale and needs a sync with other nodes
-	log.Infof("Reiceived an orphan block %s of height %d", block.Hash, block.Height)
-	_, err = bc.BlockIndexRepo.GetBlockIndexRecord(block.HashPrevBlock)
-	if err != nil && err != persistence.ErrNotFound {
-		return fmt.Errorf("failed to get block index record: %w", err)
-	}
-
-	// this block accesses past blocks
-	if err == nil {
-		bc.branch = []*core.Block{}
-		bc.branch = append(bc.branch, block)
-		log.Infof("Orphan block %s has a known parent %s on active chain. Marked as possible new branch", block.Hash, block.HashPrevBlock)
-		return nil
-	}
-
-	// if not found, it means the parent block is not on the active chain
-	// we need to check if it is on the orphanage
-	if err == persistence.ErrNotFound {
-		// this block is a child of the last block in the branch
-		if len(bc.branch) != 0 && bc.branch[len(bc.branch)-1].Hash == block.HashPrevBlock {
-			bc.branch = append(bc.branch, block)
-			log.Infof("Orphan block %s is the tip of new branch. Appended.", block.Hash)
-
-			// if the blockchain tip is lower than the branch tip, reorganize
-			rec, err := bc.GetBlockIndexRecord(tipHash)
-			if err != nil {
-				return fmt.Errorf("failed to get block index record for tip %s: %w", tipHash, err)
-			}
-			if rec.Height < bc.branch[len(bc.branch)-1].Height {
-				log.Infof("Fork detected. Reorganizing to new branch...")
-				if err := bc.Reorganize(bc.branch); err != nil {
-					return fmt.Errorf("failed to reorganize: %w", err)
-				}
-
-				bc.branch = []*core.Block{}
-			}
-		} else {
-			log.Infof("Orphan block %s is dropped", block.Hash)
-		}
-	}
-
-	return nil
-}
-
-// AddBlockAsTip add the block as the active tip. The block must be valid according to the current state.
-func (bc *Blockchain) AddBlockAsTip(block *core.Block) error {
 	prevBlockIndex, err := bc.GetBlockIndexRecord(block.HashPrevBlock)
 	if err == persistence.ErrNotFound {
 		if block.HashPrevBlock != core.EmptyHash256() {
@@ -435,6 +451,10 @@ func (bc *Blockchain) AddBlockAsTip(block *core.Block) error {
 		return fmt.Errorf("failed to update current block hash: %w", err)
 	}
 
+	// update mining context
+	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HASH, block.Hash)
+	bc.MiningCtx = context.WithValue(bc.MiningCtx, CTX_PREV_HEIGHT, block.Height)
+
 	log.Infof("Blockchain tip changes to: %s, height=%d", block.Hash, block.Height)
 
 	// call handlers
@@ -518,7 +538,7 @@ func (bc *Blockchain) StartP2PListener() {
 	log.Infof("Node starts listening at %s", bc.Network.GetAddress())
 }
 
-func (bc *Blockchain) StartBlockDownloads() {
+func (bc *Blockchain) DownloadBlocks() {
 	for {
 		log.Infof("Downloading blocks...")
 
@@ -569,11 +589,7 @@ func (bc *Blockchain) StartBlockDownloads() {
 		// TODO: handle forks
 		blocks := bc.Network.DownloadBlocks(targetPeer, invs[1:])
 		for _, b := range blocks {
-			err = bc.AddBlockAsTip(b)
-			if err != nil {
-				log.Errorf("Error adding block as tip: %s", err)
-				break
-			}
+			bc.AddBlockToQueue(b)
 		}
 
 		if len(blocks) == 0 {
@@ -588,6 +604,7 @@ func (bc *Blockchain) StartBlockDownloads() {
 }
 
 func (bc *Blockchain) StartPeerDiscovery(seed string) {
+	log.Infof("Starting peer discovery...")
 	if err := bc.Network.AddPeer(seed); err != nil {
 		log.Errorf("Error adding seed peer: %s", err)
 	}
@@ -701,7 +718,7 @@ func (bc *Blockchain) Reorganize(blocks []*core.Block) error {
 	}
 
 	for _, block := range blocks {
-		err = bc.AddBlockAsTip(block)
+		err = bc.addBlockAsTip(block)
 		if err != nil {
 			return fmt.Errorf("failed to add block %s as tip: %w", block.Hash, err)
 		}
